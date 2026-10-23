@@ -1,0 +1,59 @@
+# Ambiente de desenvolvimento local: PostgreSQL, Redis, API (com reload) e frontend Vite.
+#   cp .env.example .env && docker compose up --build
+#   docker compose exec api python -m app.cli seed-dev
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: atende
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atende-dev}
+      POSTGRES_DB: atende
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/docker/init-test-db.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atende -d atende"]
+      interval: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+      target: runtime
+    env_file: .env
+    environment:
+      ANDRIPA_DATABASE_URL: postgresql+psycopg://atende:${POSTGRES_PASSWORD:-atende-dev}@postgres:5432/atende
+      ANDRIPA_REDIS_URL: redis://redis:6379/0
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  web:
+    image: node:22-alpine
+    working_dir: /web
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    environment:
+      API_PROXY_TARGET: http://api:8000
+    volumes:
+      - ./frontend:/web
+      - webmodules:/web/node_modules
+    ports: ["127.0.0.1:5173:5173"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  webmodules:

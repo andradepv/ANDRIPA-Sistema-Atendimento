@@ -1,0 +1,10 @@
+output "app_url" { value = "https://${var.domain_name}" }
+output "ecr_repository_url" { value = aws_ecr_repository.api.repository_url }
+output "web_bucket" { value = aws_s3_bucket.web.bucket }
+output "cloudfront_distribution_id" { value = aws_cloudfront_distribution.main.id }
+output "ecs_cluster" { value = aws_ecs_cluster.main.name }
+output "ecs_service" { value = aws_ecs_service.api.name }
+output "migrate_task_definition" { value = aws_ecs_task_definition.migrate.family }
+output "private_subnets" { value = aws_subnet.private[*].id }
+output "api_security_group" { value = aws_security_group.api.id }
+output "app_secret_arn" { value = aws_secretsmanager_secret.app.arn }

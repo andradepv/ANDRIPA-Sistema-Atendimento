@@ -1,0 +1,63 @@
+# Implantação reutilizável: Terraform → migração (tarefa avulsa) → serviço ECS → frontend no S3/CloudFront.
+# Ambientes do GitHub (staging/production) guardam variáveis e exigem aprovação manual em produção.
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment: { type: string, required: true }
+      image_tag: { type: string, required: true }
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions: { id-token: write, contents: read }
+    env:
+      TF_ENV: ${{ inputs.environment == 'production' && 'production' || 'staging' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: { role-to-assume: "${{ vars.AWS_DEPLOY_ROLE_ARN }}", aws-region: sa-east-1 }
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_wrapper: false }
+
+      - name: Terraform apply
+        working-directory: infra/terraform
+        run: |
+          terraform init -backend-config=envs/$TF_ENV.backend.hcl
+          terraform apply -auto-approve -var-file=envs/$TF_ENV.tfvars -var api_image_tag=${{ inputs.image_tag }}
+          terraform output -json > ../../tf.json
+
+      - name: Migração do banco (tarefa ECS avulsa; falha interrompe o deploy)
+        run: |
+          CLUSTER=$(jq -r .ecs_cluster.value tf.json)
+          TASK=$(jq -r .migrate_task_definition.value tf.json)
+          SUBNETS=$(jq -r '.private_subnets.value | join(",")' tf.json)
+          SG=$(jq -r .api_security_group.value tf.json)
+          ARN=$(aws ecs run-task --cluster $CLUSTER --task-definition $TASK --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          aws ecs wait tasks-stopped --cluster $CLUSTER --tasks $ARN
+          CODE=$(aws ecs describe-tasks --cluster $CLUSTER --tasks $ARN --query 'tasks[0].containers[0].exitCode' --output text)
+          test "$CODE" = "0" || { echo "Migração falhou (exit $CODE)"; exit 1; }
+
+      - name: Aguarda o serviço estabilizar (circuit breaker faz rollback automático)
+        run: aws ecs wait services-stable --cluster $(jq -r .ecs_cluster.value tf.json) --services $(jq -r .ecs_service.value tf.json)
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Build e publicação do frontend
+        working-directory: frontend
+        run: |
+          npm install --no-audit --no-fund && npm run build
+          BUCKET=$(jq -r .web_bucket.value ../tf.json)
+          aws s3 sync dist/assets s3://$BUCKET/assets --cache-control "public,max-age=31536000,immutable"
+          aws s3 sync dist s3://$BUCKET --exclude "assets/*" --cache-control "no-cache" --delete
+          aws cloudfront create-invalidation --distribution-id $(jq -r .cloudfront_distribution_id.value ../tf.json) --paths "/index.html" "/sw.js" "/manifest.webmanifest"
+
+      - name: Smoke test
+        run: |
+          URL=$(jq -r .app_url.value tf.json)
+          curl -sf $URL/api/v1/health/ready
+          curl -sf $URL/ | grep -q '<div id="root">'
