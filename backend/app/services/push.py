@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import PushSubscription
-from app.schemas import PushBroadcastIn, PushBroadcastOut, PushSubscribeIn
+from app.schemas import PushBroadcastOut, PushSubscribeIn
 from app.services import webpush
 
 log = logging.getLogger("andripa.push")
@@ -50,7 +50,7 @@ async def unsubscribe(db: AsyncSession, endpoint: str) -> None:
     await db.commit()
 
 
-async def broadcast(db: AsyncSession, est_id: uuid.UUID, data: PushBroadcastIn,
+async def broadcast(db: AsyncSession, est_id: uuid.UUID, title: str, body: str, url: str = "/",
                     client: httpx.AsyncClient | None = None) -> PushBroadcastOut:
     _require_enabled()
     s = get_settings()
@@ -58,7 +58,7 @@ async def broadcast(db: AsyncSession, est_id: uuid.UUID, data: PushBroadcastIn,
     subs = (await db.execute(select(PushSubscription).where(
         PushSubscription.establishment_id == est_id, PushSubscription.revoked_at.is_(None),
         PushSubscription.consent_marketing.is_(True)))).scalars().all()
-    payload = json.dumps({"title": data.title, "body": data.body, "url": data.url or "/"}).encode()
+    payload = json.dumps({"title": title, "body": body, "url": url}).encode()
     own_client = client is None
     client = client or httpx.AsyncClient(timeout=10)
     sem = asyncio.Semaphore(20)

@@ -1,5 +1,39 @@
 # Relatório de testes — resultados reais
 
+## MVP simplificado — execução de 04/11/2026
+
+Windows 11 + Docker (PostgreSQL 16, Redis 7, Python 3.13), **banco e Redis reais**. Ver
+[ADR-0007](adr/0007-mvp-simplificado.md) para o que mudou.
+
+| Verificação | Resultado |
+|---|---|
+| `pytest` (88 testes) | **88 passaram, 0 falhas** (~52 s) |
+| Testes de concorrência e tempo real repetidos 5× (liberação simultânea painel × PIN, toque duplo em “Atendido”, pedido × encerramento, entrega entre instâncias) | **5/5 verdes** |
+| Playwright/Chromium (4 testes) | **4 passaram**: jornada completa, atendente só vê o Salão, avisos em Novidades com navegador sem Push, endereço inexistente |
+| `ruff check app tests` · `mypy app` · `tsc --noEmit` · `vite build` | 0 problemas · 0 problemas · 0 erros · OK |
+| `alembic upgrade → downgrade base → upgrade` + `alembic check` | sem divergência |
+| Carga (20 clientes, 30 s, 1 processo) | **196 req/s, 0 erros**, p95 entre 126 e 193 ms |
+
+| Endpoint | Requisições | p50 | p95 | p99 |
+|---|--:|--:|--:|--:|
+| GET /tables | 1179 | 91 ms | 145 ms | 187 ms |
+| GET /service-requests | 1177 | 78 ms | 126 ms | 174 ms |
+| GET /public/notices | 1178 | 89 ms | 135 ms | 187 ms |
+| GET /public/menu | 1178 | 125 ms | 193 ms | 246 ms |
+| GET /public/session | 1180 | 90 ms | 135 ms | 183 ms |
+
+Defeitos encontrados e corrigidos nesta rodada:
+- **Cardápio não funcionava pelo IP da rede local (HTTP)**: o botão “Adicionar” usava `crypto.randomUUID`, que
+  o navegador só oferece em HTTPS/localhost. Trocado por `crypto.getRandomValues` (disponível sempre).
+- **Campo do PIN sem foco ao abrir o diálogo**: o foco ia para o “×” e o Enter fechava o diálogo. O componente
+  de diálogo agora foca o campo marcado com `data-autofocus`.
+- **Teste instável `test_reconnect_recovers_state`** (falhava ~50% das vezes): aceitava o evento atrasado de
+  criação no lugar do evento de conclusão. O filtro agora confere o status.
+
+As seções abaixo são da execução de 23/10/2026, sobre a primeira versão (antes da simplificação).
+
+---
+
 Execução de 23/10/2026, ambiente de desenvolvimento (Linux, 2 vCPU), **PostgreSQL 16 e Redis 7 reais**.
 Nenhum teste foi marcado como aprovado sem ser executado; nenhum teste foi removido.
 

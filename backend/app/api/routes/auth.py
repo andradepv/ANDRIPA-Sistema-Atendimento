@@ -9,13 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CSRF_COOKIE, STAFF_COOKIE, StaffCtx, get_staff, utcnow
 from app.core.config import get_settings
-from app.core.errors import AppError
+from app.core.errors import AppError, conflict
 from app.core.permissions import perms_for
 from app.core.ratelimit import client_ip, hit
 from app.core.security import hash_secret, new_token, token_hash, verify_secret
 from app.db.session import get_db
 from app.models import Establishment, StaffSession, User
-from app.schemas import ChangeOwnCredentials, EstablishmentOut, LoginIn, MeOut
+from app.schemas import ChangeOwnPin, EstablishmentOut, LoginIn, MeOut
 from app.services.audit import audit
 from app.services.events import STAFF, emit
 from app.services.serializers import user_out
@@ -39,14 +39,14 @@ async def _me(db: AsyncSession, user: User, csrf: str) -> MeOut:
 async def login(data: LoginIn, request: Request, response: Response, db: AsyncSession = Depends(get_db)) -> MeOut:
     ip = client_ip(request)
     await hit(f"login:ip:{ip}", 20, 300)
-    await hit(f"login:email:{data.email}", 8, 300)
-    user = (await db.execute(select(User).where(User.email == data.email))).scalar_one_or_none()
-    ok = verify_secret(data.password, user.password_hash if user else None)
+    await hit(f"login:user:{data.username}", 8, 300)
+    user = (await db.execute(select(User).where(User.username == data.username))).scalar_one_or_none()
+    ok = verify_secret(data.pin, user.pin_hash if user else None)
     if not ok or user is None or not user.active:
         if user is not None:
             audit(db, establishment_id=user.establishment_id, actor_id=user.id, action="auth.login_failed", ip=ip)
             await db.commit()
-        raise AppError(401, "invalid_credentials", "E-mail ou senha incorretos.")
+        raise AppError(401, "invalid_credentials", "Usuário ou PIN incorretos.")
     s = get_settings()
     token, csrf = new_token(), secrets.token_urlsafe(24)
     now = utcnow()
@@ -92,26 +92,27 @@ async def me(ctx: StaffCtx = Depends(get_staff), db: AsyncSession = Depends(get_
     return await _me(db, ctx.user, ctx.session.csrf_token)
 
 
-@router.post("/credentials", status_code=204)
-async def change_credentials(data: ChangeOwnCredentials, request: Request, ctx: StaffCtx = Depends(get_staff),
-                             db: AsyncSession = Depends(get_db)) -> Response:
+@router.post("/pin", status_code=204)
+async def change_pin(data: ChangeOwnPin, request: Request, ctx: StaffCtx = Depends(get_staff),
+                     db: AsyncSession = Depends(get_db)) -> Response:
+    from app.services.tables import find_user_by_pin
+
     await hit(f"cred:{ctx.user.id}", 10, 600)
     user = await db.get(User, ctx.user.id)
     assert user is not None
-    if not verify_secret(data.current_password, user.password_hash):
-        raise AppError(403, "confirmation_failed", "Senha atual incorreta.")
-    if data.new_password:
-        user.password_hash = hash_secret(data.new_password)
-        # Troca de senha revoga as outras sessões.
-        ids = (await db.execute(update(StaffSession).where(
-            StaffSession.user_id == user.id, StaffSession.id != ctx.session.id, StaffSession.revoked_at.is_(None))
-            .values(revoked_at=utcnow()).returning(StaffSession.id))).scalars().all()
-        emit(db, ctx.establishment_id, "staff.session_revoked", {"staff_session_ids": [str(i) for i in ids]},
-             audience=())
-    if data.new_pin:
-        user.pin_hash = hash_secret(data.new_pin)
-    audit(db, establishment_id=ctx.establishment_id, actor_id=user.id, action="auth.change_credentials",
-          details={"password": bool(data.new_password), "pin": bool(data.new_pin)}, ip=client_ip(request))
+    if not verify_secret(data.current_pin, user.pin_hash):
+        raise AppError(403, "confirmation_failed", "PIN atual incorreto.")
+    if await find_user_by_pin(db, user.establishment_id, data.new_pin, exclude=user.id):
+        raise conflict("pin_taken", "Este PIN já é usado por outra pessoa da equipe. Escolha outro.")
+    user.pin_hash = hash_secret(data.new_pin)
+    # Troca de PIN revoga as outras sessões.
+    ids = (await db.execute(update(StaffSession).where(
+        StaffSession.user_id == user.id, StaffSession.id != ctx.session.id, StaffSession.revoked_at.is_(None))
+        .values(revoked_at=utcnow()).returning(StaffSession.id))).scalars().all()
+    emit(db, ctx.establishment_id, "staff.session_revoked", {"staff_session_ids": [str(i) for i in ids]},
+         audience=())
+    audit(db, establishment_id=ctx.establishment_id, actor_id=user.id, action="auth.change_pin",
+          ip=client_ip(request))
     await db.commit()
     return Response(status_code=204)
 

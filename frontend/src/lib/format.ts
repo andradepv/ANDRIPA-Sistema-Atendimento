@@ -1,4 +1,4 @@
-import type { OrderStatus, RequestStatus, RequestType, TableStatus } from "../api/types";
+import type { RequestStatus, RequestType, ServiceRequest, TableStatus } from "../api/types";
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 export const money = (cents: number) => brl.format(cents / 100);
@@ -21,38 +21,36 @@ export function elapsed(iso: string, now: number): string {
   return `${h} h ${m % 60} min`;
 }
 
+export const tableStatusLabel: Record<TableStatus, string> = { LIVRE: "Livre", OCUPADA: "Ocupada" };
+
+/** Como a equipe vê cada solicitação. */
 export const requestTypeLabel: Record<RequestType, string> = {
   CHAMAR_ATENDENTE: "Chamou o atendente",
-  NOVO_PEDIDO: "Novo pedido",
+  NOVO_PEDIDO: "Pedido do cardápio",
   PEDIR_CONTA: "Pediu a conta",
 };
 
-export const requestStatusLabel: Record<RequestStatus, string> = {
-  PENDENTE: "Aguardando",
-  ASSUMIDA: "Assumido",
-  EM_ATENDIMENTO: "Em atendimento",
-  CONCLUIDA: "Concluído",
-  CANCELADA: "Cancelado",
+/** O botão único que resolve cada tipo de solicitação. */
+export const doneActionLabel: Record<RequestType, string> = {
+  CHAMAR_ATENDENTE: "Atendido",
+  NOVO_PEDIDO: "Repassado à cozinha",
+  PEDIR_CONTA: "Conta finalizada",
 };
 
-export const orderStatusLabel: Record<OrderStatus, string> = {
-  RECEBIDO: "Recebido",
-  EM_PREPARO: "Em preparo",
-  PRONTO: "Pronto",
-  ENTREGUE: "Entregue",
-  CANCELADO: "Cancelado",
+const statusByType: Record<RequestType, Record<RequestStatus, string>> = {
+  CHAMAR_ATENDENTE: { PENDENTE: "Aguardando", CONCLUIDA: "Atendido", CANCELADA: "Cancelado" },
+  NOVO_PEDIDO: { PENDENTE: "Enviado", CONCLUIDA: "Repassado à cozinha", CANCELADA: "Não repassado" },
+  PEDIR_CONTA: { PENDENTE: "Solicitada", CONCLUIDA: "Conta finalizada", CANCELADA: "Cancelada" },
 };
 
-export const tableStatusLabel: Record<TableStatus, string> = {
-  LIVRE: "Livre",
-  OCUPADA: "Ocupada",
-  ENCERRAMENTO_SOLICITADO: "Pediu a conta",
-};
+export const requestStatusLabel = (r: Pick<ServiceRequest, "type" | "status">) => statusByType[r.type][r.status];
 
-export const paymentLabel: Record<string, string> = {
-  DINHEIRO: "Dinheiro",
-  CARTAO_CREDITO: "Cartão de crédito",
-  CARTAO_DEBITO: "Cartão de débito",
-  PIX: "Pix",
-  OUTRO: "Outro",
-};
+/** Título curto da solicitação na linha do tempo do cliente e do histórico. */
+export function requestTitle(r: ServiceRequest): string {
+  if (r.type === "NOVO_PEDIDO") return r.order ? `Pedido nº ${r.order.number}` : "Pedido";
+  return r.type === "PEDIR_CONTA" ? "Conta" : "Chamado";
+}
+
+export function orderSummary(r: ServiceRequest): string {
+  return (r.order?.items ?? []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ");
+}

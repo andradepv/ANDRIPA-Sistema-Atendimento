@@ -5,33 +5,39 @@ Fonte única: `backend/app/core/permissions.py`. Toda rota protegida declara a p
 perfil não pode fazer, mas isso é só conveniência — o backend nega de qualquer forma (testado em
 `tests/test_permissions.py`).
 
+## Como cada pessoa entra
+- **Painel** (`/login`): **usuário + PIN**. Não há e-mail nem senha.
+- **Liberar mesa** (página da mesa, `/m/<código>`): só o **PIN** de qualquer pessoa ativa da equipe.
+  O atendente não precisa abrir o painel: lê o QR Code, toca em “Liberar mesa”, digita o PIN e pronto.
+- Por isso o **PIN é único por estabelecimento** (o sistema recusa um PIN já usado por outra pessoa).
+
 | Permissão | Atendente | Caixa | Admin | Onde é usada |
 |---|:-:|:-:|:-:|---|
-| `tables.view` | ✔ | ✔ | ✔ | `GET /tables`, detalhe de sessão aberta |
-| `tables.open` | ✔ | ✔ | ✔ | `POST /tables/{id}/open` (com PIN/senha pessoal) |
-| `tables.request_close` | ✔ | ✔ | ✔ | `POST /tables/{id}/request-close` |
-| `tables.close` | | ✔ | ✔ | fechar conta, cancelar pedido de conta, concluir chamado PEDIR_CONTA |
+| `tables.view` | ✔ | ✔ | ✔ | Salão: mesas e solicitações aguardando; detalhe do atendimento atual |
+| `tables.open` | ✔ | ✔ | ✔ | `POST /tables/{id}/open` (pelo painel) |
+| `requests.handle` | ✔ | ✔ | ✔ | “Atendido” e “Repassado à cozinha” (`POST /service-requests/{id}/complete`) |
+| `tables.close` | | ✔ | ✔ | “Conta finalizada”: encerra a mesa (`POST /tables/{id}/close` ou completar `PEDIR_CONTA`) |
+| `history.view` | | ✔ | ✔ | atendimentos anteriores de cada mesa |
 | `tables.manage` | | | ✔ | cadastrar/renumerar/desativar mesas, QR, novo endereço |
-| `requests.view` / `requests.handle` | ✔ | ✔ | ✔ | listar, assumir, iniciar, concluir chamados |
-| `requests.prioritize` | | ✔ | ✔ | prioridade manual; agir em chamado de outro funcionário |
-| `orders.view` / `orders.update_status` | ✔ | ✔ | ✔ | tela Pedidos |
-| `orders.cancel` | | ✔ | ✔ | cancelar pedido (motivo obrigatório) |
-| `cash.view` | | ✔ | ✔ | tela Caixa |
-| `history.view` | | ✔ | ✔ | histórico e detalhe de sessões encerradas |
 | `menu.manage` | | | ✔ | categorias, produtos, adicionais, disponibilidade |
-| `promotions.manage` | | | ✔ | promoções e cupons |
-| `push.send` | | | ✔ | envio de notificações |
-| `users.manage` | | | ✔ | equipe, papéis, senhas, PIN |
+| `notices.manage` | | | ✔ | avisos aos clientes (e push opcional) |
+| `users.manage` | | | ✔ | equipe, papéis, PIN |
 | `audit.view` | | | ✔ | auditoria |
-| `settings.manage` | | | ✔ | nome, fuso, código de entrada, pedidos pelo celular |
+| `settings.manage` | | | ✔ | nome, fuso, pedidos pelo celular |
+
+A liberação pela página da mesa (`POST /public/tables/{código}/open`) não exige login: vale o PIN de
+qualquer pessoa ativa da equipe daquele estabelecimento.
 
 ## Regras adicionais
 - **Administrador** recebe automaticamente todas as permissões, inclusive futuras (`frozenset(Perm)`).
 - **Escalonamento**: só `users.manage` altera papéis. Não é possível rebaixar/desativar a si mesmo nem
   remover o último administrador ativo.
-- **Mudança de papel, desativação ou troca de senha** revoga todas as sessões do usuário e fecha seus
+- **Mudança de papel, desativação ou troca de PIN** revoga as sessões do usuário e fecha seus
   WebSockets — o novo papel vale no próximo login.
-- **Chamado assumido** por outra pessoa só pode ser movido por ela ou por quem tem `requests.prioritize`.
+- **Sem “quem assumiu”**: qualquer pessoa da equipe resolve uma solicitação; o sistema registra quem e quando.
+  Se duas pessoas tocarem ao mesmo tempo, só uma registra (a outra recebe `409 already_done`).
+- **Força bruta de PIN**: login limitado por usuário e por IP; liberação de mesa limitada por IP, por mesa e por
+  estabelecimento; tentativas erradas ficam na auditoria (`table.open_denied`).
 - **Isolamento**: todas as consultas filtram pelo `establishment_id` do usuário; IDs de outro
-  estabelecimento respondem 404 (sem revelar que existem).
+  estabelecimento respondem 404 (sem revelar que existem). O PIN de um bar não libera mesa de outro.
 - **Clientes** não têm papel: o token da mesa só permite operações daquela sessão (`/public/*`).

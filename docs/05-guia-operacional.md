@@ -1,59 +1,58 @@
-# Guia operacional — atendentes e caixa
+# Guia operacional — equipe
 
-## Antes do turno
-1. Abra o painel no celular, tablet ou computador e entre com **seu** e-mail e senha.
-2. Confira o indicador ao lado do nome do bar: **Ao vivo** (verde) significa que os chamados chegam na hora.
-   Se aparecer **Sem conexão**, o painel tenta reconectar sozinho e, ao voltar, busca tudo o que aconteceu.
-3. Configure seu **PIN pessoal** em *Minha conta* (clique no seu nome). Ele confirma que foi você quem
-   abriu cada mesa. Nunca empreste o PIN.
+O Andripa serve para **avisar a equipe** de que uma mesa precisa de atendimento. Tudo é feito com um toque.
 
 ## Atendente
-**Abrir a mesa** — quando o cliente se sentar:
-1. Em **Salão**, toque na mesa (as livres têm borda tracejada).
-2. Se quiser, escreva uma identificação (ex.: “Ana, aniversário”).
-3. Digite seu PIN e toque em **Abrir mesa**.
-4. Mostre ao cliente o QR Code da mesa ou peça para aproximar o celular da etiqueta. Se o bar exigir
-   código, informe os 4 números que aparecem ao tocar na mesa.
+Você **não precisa** abrir o painel.
 
-**Chamados** — aparecem no topo da coluna *Chamados*, com bipe:
-- Borda âmbar: cliente chamou. Borda vermelha: pediu a conta. O tempo fica laranja após 2 min e vermelho
-  após 5 min.
-- Toque em **Assumir** — só uma pessoa consegue assumir; se outro colega foi mais rápido, aparece o nome dele.
-- Depois **Iniciar atendimento** e **Concluir**.
+**Liberar a mesa** — quando o cliente se sentar:
+1. Leia o QR Code da mesa (ou aproxime o celular da etiqueta NFC).
+2. Toque em **Liberar mesa** (o botão discreto, abaixo de “Cliente”).
+3. Digite **seu PIN**. Pronto: a mesa está liberada e o cliente já pode tocar em **Cliente**.
 
-**Pedidos** — na aba *Pedidos*, cada coluna é uma etapa: *Recebido → Em preparo → Pronto*. Use os botões
-para avançar; ao marcar **Entregue na mesa** o pedido sai da tela e o cliente vê a atualização no celular.
+Nunca empreste o PIN: ele identifica você no histórico.
 
-**Cliente pediu a conta para você em voz alta?** Toque na mesa → **Registrar pedido de conta**.
+## Painel (caixa, gerente, ou um tablet no balcão)
+Entre em `/login` com **usuário e PIN**. Confira o indicador ao lado do nome do bar: **Ao vivo** (verde)
+significa que os avisos chegam na hora. Se aparecer **Sem conexão**, o painel reconecta sozinho e, ao
+voltar, busca tudo o que aconteceu.
 
-## Caixa
-1. Aba **Caixa**: as mesas que pediram a conta aparecem primeiro.
-2. Toque na mesa para ver a comanda (pedidos, situação e subtotal calculado pelo sistema).
-3. Se houver pedido ainda não entregue, entregue-o (aba Pedidos) ou, se o cliente desistiu, marque
-   **Cancelar os pedidos não entregues** e informe o motivo.
-4. **Fechar conta e liberar mesa**: escolha a forma de pagamento (só registro) e, se houver, o cupom.
-5. Ao fechar, o celular do cliente perde o acesso na hora e a mesa volta a **Livre**.
+O **Salão** é a única tela de operação:
+- À esquerda, **Solicitações** aguardando, das mais antigas para as mais novas, com bipe a cada nova.
+  O tempo fica laranja após 2 min e vermelho após 5 min. Cada uma tem **um único botão**:
 
-O sistema **não cobra**: receba na maquininha/Pix como de costume e registre a forma usada.
+  | Solicitação | Botão |
+  |---|---|
+  | Chamou o atendente | **Atendido** |
+  | Pedido do cardápio (mostra os itens e observações) | **Repassado à cozinha** |
+  | Pediu a conta | **Conta finalizada** (só caixa/admin) — encerra a mesa |
+
+- À direita, as **Mesas**: livres (tracejadas), ocupadas e, em vermelho, as que pediram a conta.
+  **Toque numa mesa** para ver os detalhes: quando e por quem foi liberada, tudo o que foi pedido nesse
+  atendimento (com o horário de cada pedido e de cada resposta) e os **atendimentos anteriores**.
+
+Ao finalizar a conta, o celular do cliente sai do atendimento na hora e a mesa volta a **Livre**.
+O sistema **não cobra** nem registra forma de pagamento: receba como de costume.
 
 ## Situações comuns
 | Situação | O que fazer |
 |---|---|
-| “Mesa não está aberta para atendimento digital” no celular do cliente | Abra a mesa no painel; peça para ler o QR de novo |
-| Cliente trocou de mesa | Feche a conta da mesa antiga (ou peça ao caixa) e abra a nova |
-| Duas pessoas tentaram abrir a mesma mesa | Só uma abertura vale; a outra vê “a mesa já está aberta” |
-| Mensagem “A mesa mudou desde que você abriu a comanda” | Chegou pedido novo; revise a comanda e confirme de novo |
+| Cliente tocou em “Cliente” e viu “mesa ainda não liberada” | Libere a mesa com seu PIN; o cliente toca em “Tentar de novo” |
+| Cliente pagou sem pedir a conta pelo celular | Toque na mesa no Salão → **Finalizar conta e liberar a mesa** |
+| Duas pessoas tocaram no mesmo botão | Só um toque vale; o outro vê “já foi resolvida” |
+| “PIN incorreto” | Confira o PIN; após muitas tentativas erradas o sistema pede para aguardar |
 | Painel “Sem conexão” | Verifique o Wi-Fi; nada se perde — tudo está gravado no servidor |
-| Esqueceu o PIN | Use sua senha no lugar do PIN, ou peça ao administrador para redefinir |
+| Esqueceu o PIN | Peça ao administrador para trocar em **Equipe** |
 
 ## Fim do turno
-Toque em **Sair**. Fechar o painel ou sair **não** fecha mesas nem apaga chamados — fechar mesa é sempre
-uma ação do caixa.
+Toque em **Sair**. Sair **não** fecha mesas nem apaga solicitações.
 
 ## Administrador (resumo)
-- **Mesas**: cadastre, imprima o QR Code e use **Copiar para NFC** para gravar a mesma URL na etiqueta
-  (qualquer app gravador de NFC, registro tipo URL). **Gerar novo endereço** invalida QR e etiqueta antigos.
+- **Mesas**: cadastre, imprima o QR Code e use **Copiar para NFC** para gravar a mesma URL na etiqueta.
+  **Gerar novo endereço** invalida QR e etiqueta antigos.
 - **Cardápio**: categorias, produtos, adicionais; desmarque *Disponível* quando acabar um item.
-- **Equipe**: crie contas individuais; trocar o papel ou a senha desconecta a pessoa.
-- **Promoções/cupons**: só aparecem para o cliente dentro do período.
-- **Auditoria**: quem abriu/fechou mesas, cancelou pedidos, alterou cardápio e equipe.
+- **Equipe**: nome, usuário, papel e PIN de cada pessoa (o PIN não pode se repetir). Trocar papel ou PIN
+  desconecta a pessoa do painel.
+- **Notificações**: publique avisos (promoções, eventos, novidades). Eles aparecem na aba *Novidades* do
+  cliente com um botão para **chamar um atendente** — é assim que o cliente sabe mais ou aproveita.
+- **Auditoria**: quem liberou/encerrou mesas, tentativas de PIN erradas, alterações no cardápio e na equipe.

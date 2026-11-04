@@ -2,7 +2,7 @@
 
 Revision ID: 0001
 Revises: 
-Create Date: 2026-10-23 03:13:03.143511
+Create Date: 2026-11-04 05:17:48.321815
 """
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('name', sa.String(length=120), nullable=False),
     sa.Column('timezone', sa.String(length=64), nullable=False),
-    sa.Column('join_code_required', sa.Boolean(), nullable=False),
     sa.Column('orders_enabled', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
@@ -64,48 +63,19 @@ def upgrade() -> None:
     sa.UniqueConstraint('establishment_id', 'name', name='uq_categories_est_name')
     )
     op.create_index(op.f('ix_categories_establishment_id'), 'categories', ['establishment_id'], unique=False)
-    op.create_table('coupons',
+    op.create_table('notices',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('establishment_id', sa.UUID(), nullable=False),
-    sa.Column('code', sa.String(length=32), nullable=False),
-    sa.Column('description', sa.String(length=280), nullable=True),
-    sa.Column('discount_type', sa.Enum('PERCENT', 'FIXED', name='discount_type', native_enum=False, create_constraint=True, length=32), nullable=False),
-    sa.Column('value', sa.Integer(), nullable=False),
-    sa.Column('min_order_cents', sa.Integer(), nullable=False),
-    sa.Column('max_uses', sa.Integer(), nullable=True),
-    sa.Column('uses_count', sa.Integer(), nullable=False),
-    sa.Column('starts_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('ends_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('active', sa.Boolean(), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("discount_type <> 'PERCENT' OR value <= 100", name=op.f('ck_coupons_percent_max')),
-    sa.CheckConstraint('ends_at > starts_at', name=op.f('ck_coupons_period_valid')),
-    sa.CheckConstraint('max_uses IS NULL OR uses_count <= max_uses', name=op.f('ck_coupons_uses_within_limit')),
-    sa.CheckConstraint('value > 0', name=op.f('ck_coupons_value_positive')),
-    sa.ForeignKeyConstraint(['establishment_id'], ['establishments.id'], name=op.f('fk_coupons_establishment_id_establishments'), ondelete='RESTRICT'),
-    sa.PrimaryKeyConstraint('id', name=op.f('pk_coupons')),
-    sa.UniqueConstraint('establishment_id', 'code', name='uq_coupons_est_code')
-    )
-    op.create_index(op.f('ix_coupons_establishment_id'), 'coupons', ['establishment_id'], unique=False)
-    op.create_table('promotions',
-    sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('establishment_id', sa.UUID(), nullable=False),
-    sa.Column('kind', sa.Enum('BANNER', 'EVENTO', 'CAMPANHA', name='promotion_kind', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.Column('title', sa.String(length=120), nullable=False),
-    sa.Column('description', sa.String(length=1000), nullable=True),
-    sa.Column('image_url', sa.String(length=500), nullable=True),
-    sa.Column('conditions', sa.String(length=500), nullable=True),
-    sa.Column('starts_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('ends_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('message', sa.String(length=500), nullable=True),
     sa.Column('active', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint('ends_at > starts_at', name=op.f('ck_promotions_period_valid')),
-    sa.ForeignKeyConstraint(['establishment_id'], ['establishments.id'], name=op.f('fk_promotions_establishment_id_establishments'), ondelete='RESTRICT'),
-    sa.PrimaryKeyConstraint('id', name=op.f('pk_promotions'))
+    sa.ForeignKeyConstraint(['establishment_id'], ['establishments.id'], name=op.f('fk_notices_establishment_id_establishments'), ondelete='RESTRICT'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_notices'))
     )
-    op.create_index(op.f('ix_promotions_establishment_id'), 'promotions', ['establishment_id'], unique=False)
+    op.create_index('ix_notices_est_active', 'notices', ['establishment_id', 'active'], unique=False)
+    op.create_index(op.f('ix_notices_establishment_id'), 'notices', ['establishment_id'], unique=False)
     op.create_table('push_subscriptions',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('establishment_id', sa.UUID(), nullable=False),
@@ -128,7 +98,7 @@ def upgrade() -> None:
     sa.Column('number', sa.Integer(), nullable=False),
     sa.Column('name', sa.String(length=80), nullable=True),
     sa.Column('public_code', sa.String(length=32), nullable=False),
-    sa.Column('status', sa.Enum('LIVRE', 'OCUPADA', 'ENCERRAMENTO_SOLICITADO', name='table_status', native_enum=False, create_constraint=True, length=32), nullable=False),
+    sa.Column('status', sa.Enum('LIVRE', 'OCUPADA', name='table_status', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.Column('current_session_id', sa.UUID(), nullable=True),
     sa.Column('active', sa.Boolean(), nullable=False),
     sa.Column('version', sa.Integer(), nullable=False),
@@ -145,16 +115,15 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('establishment_id', sa.UUID(), nullable=False),
     sa.Column('name', sa.String(length=120), nullable=False),
-    sa.Column('email', sa.String(length=254), nullable=False),
+    sa.Column('username', sa.String(length=32), nullable=False),
     sa.Column('role', sa.Enum('ADMIN', 'CAIXA', 'ATENDENTE', name='user_role', native_enum=False, create_constraint=True, length=32), nullable=False),
-    sa.Column('password_hash', sa.String(length=255), nullable=False),
-    sa.Column('pin_hash', sa.String(length=255), nullable=True),
+    sa.Column('pin_hash', sa.String(length=255), nullable=False),
     sa.Column('active', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['establishment_id'], ['establishments.id'], name=op.f('fk_users_establishment_id_establishments'), ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_users')),
-    sa.UniqueConstraint('email', name=op.f('uq_users_email'))
+    sa.UniqueConstraint('username', name=op.f('uq_users_username'))
     )
     op.create_index(op.f('ix_users_establishment_id'), 'users', ['establishment_id'], unique=False)
     op.create_table('audit_logs',
@@ -211,23 +180,13 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('establishment_id', sa.UUID(), nullable=False),
     sa.Column('table_id', sa.UUID(), nullable=False),
-    sa.Column('label', sa.String(length=80), nullable=True),
     sa.Column('status', sa.Enum('OPEN', 'CLOSED', name='session_status', native_enum=False, create_constraint=True, length=32), nullable=False),
-    sa.Column('join_code', sa.String(length=8), nullable=False),
     sa.Column('opened_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('opened_by_id', sa.UUID(), nullable=False),
-    sa.Column('close_requested_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('closed_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('closed_by_id', sa.UUID(), nullable=True),
-    sa.Column('subtotal_cents', sa.Integer(), nullable=True),
-    sa.Column('discount_cents', sa.Integer(), nullable=True),
-    sa.Column('total_cents', sa.Integer(), nullable=True),
-    sa.Column('payment_method', sa.String(length=32), nullable=True),
-    sa.Column('coupon_id', sa.UUID(), nullable=True),
-    sa.Column('close_note', sa.String(length=500), nullable=True),
     sa.Column('version', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['closed_by_id'], ['users.id'], name=op.f('fk_table_sessions_closed_by_id_users')),
-    sa.ForeignKeyConstraint(['coupon_id'], ['coupons.id'], name=op.f('fk_table_sessions_coupon_id_coupons')),
     sa.ForeignKeyConstraint(['establishment_id'], ['establishments.id'], name=op.f('fk_table_sessions_establishment_id_establishments'), ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['opened_by_id'], ['users.id'], name=op.f('fk_table_sessions_opened_by_id_users')),
     sa.ForeignKeyConstraint(['table_id'], ['tables.id'], name=op.f('fk_table_sessions_table_id_tables'), ondelete='RESTRICT'),
@@ -267,20 +226,16 @@ def upgrade() -> None:
     sa.Column('session_id', sa.UUID(), nullable=False),
     sa.Column('table_id', sa.UUID(), nullable=False),
     sa.Column('number', sa.BigInteger(), server_default=sa.text("nextval('order_number_seq')"), nullable=False),
-    sa.Column('status', sa.Enum('RECEBIDO', 'EM_PREPARO', 'PRONTO', 'ENTREGUE', 'CANCELADO', name='order_status', native_enum=False, create_constraint=True, length=32), nullable=False),
-    sa.Column('origin', sa.String(length=16), nullable=False),
     sa.Column('note', sa.String(length=280), nullable=True),
     sa.Column('total_cents', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('version', sa.Integer(), nullable=False),
     sa.CheckConstraint('total_cents >= 0', name=op.f('ck_orders_total_non_negative')),
     sa.ForeignKeyConstraint(['establishment_id'], ['establishments.id'], name=op.f('fk_orders_establishment_id_establishments'), ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['session_id'], ['table_sessions.id'], name=op.f('fk_orders_session_id_table_sessions'), ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['table_id'], ['tables.id'], name=op.f('fk_orders_table_id_tables')),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_orders'))
     )
-    op.create_index('ix_orders_est_status_created', 'orders', ['establishment_id', 'status', 'created_at'], unique=False)
+    op.create_index('ix_orders_est_created', 'orders', ['establishment_id', 'created_at'], unique=False)
     op.create_index(op.f('ix_orders_establishment_id'), 'orders', ['establishment_id'], unique=False)
     op.create_index(op.f('ix_orders_session_id'), 'orders', ['session_id'], unique=False)
     op.create_table('service_requests',
@@ -289,19 +244,15 @@ def upgrade() -> None:
     sa.Column('session_id', sa.UUID(), nullable=False),
     sa.Column('table_id', sa.UUID(), nullable=False),
     sa.Column('type', sa.Enum('CHAMAR_ATENDENTE', 'NOVO_PEDIDO', 'PEDIR_CONTA', name='request_type', native_enum=False, create_constraint=True, length=32), nullable=False),
-    sa.Column('status', sa.Enum('PENDENTE', 'ASSUMIDA', 'EM_ATENDIMENTO', 'CONCLUIDA', 'CANCELADA', name='request_status', native_enum=False, create_constraint=True, length=32), nullable=False),
-    sa.Column('priority', sa.Integer(), nullable=False),
+    sa.Column('status', sa.Enum('PENDENTE', 'CONCLUIDA', 'CANCELADA', name='request_status', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.Column('note', sa.String(length=280), nullable=True),
     sa.Column('order_id', sa.UUID(), nullable=True),
-    sa.Column('origin', sa.String(length=16), nullable=False),
-    sa.Column('assigned_to_id', sa.UUID(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('claimed_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('completed_by_id', sa.UUID(), nullable=True),
     sa.Column('version', sa.Integer(), nullable=False),
-    sa.CheckConstraint('priority BETWEEN 0 AND 3', name=op.f('ck_service_requests_priority_range')),
-    sa.ForeignKeyConstraint(['assigned_to_id'], ['users.id'], name=op.f('fk_service_requests_assigned_to_id_users')),
+    sa.ForeignKeyConstraint(['completed_by_id'], ['users.id'], name=op.f('fk_service_requests_completed_by_id_users')),
     sa.ForeignKeyConstraint(['establishment_id'], ['establishments.id'], name=op.f('fk_service_requests_establishment_id_establishments'), ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['session_id'], ['table_sessions.id'], name=op.f('fk_service_requests_session_id_table_sessions'), ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['table_id'], ['tables.id'], name=op.f('fk_service_requests_table_id_tables')),
@@ -310,7 +261,7 @@ def upgrade() -> None:
     op.create_index('ix_service_requests_est_status_created', 'service_requests', ['establishment_id', 'status', 'created_at'], unique=False)
     op.create_index(op.f('ix_service_requests_establishment_id'), 'service_requests', ['establishment_id'], unique=False)
     op.create_index(op.f('ix_service_requests_session_id'), 'service_requests', ['session_id'], unique=False)
-    op.create_index('uq_active_request_per_type', 'service_requests', ['session_id', 'type'], unique=True, postgresql_where=sa.text("status IN ('PENDENTE','ASSUMIDA','EM_ATENDIMENTO') AND type <> 'NOVO_PEDIDO'"))
+    op.create_index('uq_active_request_per_type', 'service_requests', ['session_id', 'type'], unique=True, postgresql_where=sa.text("status = 'PENDENTE' AND type <> 'NOVO_PEDIDO'"))
     op.create_table('order_items',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('order_id', sa.UUID(), nullable=False),
@@ -327,19 +278,6 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_order_items'))
     )
     op.create_index(op.f('ix_order_items_order_id'), 'order_items', ['order_id'], unique=False)
-    op.create_table('order_status_history',
-    sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('order_id', sa.UUID(), nullable=False),
-    sa.Column('from_status', sa.String(length=32), nullable=True),
-    sa.Column('to_status', sa.String(length=32), nullable=False),
-    sa.Column('changed_by_id', sa.UUID(), nullable=True),
-    sa.Column('reason', sa.String(length=280), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.ForeignKeyConstraint(['changed_by_id'], ['users.id'], name=op.f('fk_order_status_history_changed_by_id_users')),
-    sa.ForeignKeyConstraint(['order_id'], ['orders.id'], name=op.f('fk_order_status_history_order_id_orders'), ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id', name=op.f('pk_order_status_history'))
-    )
-    op.create_index(op.f('ix_order_status_history_order_id'), 'order_status_history', ['order_id'], unique=False)
     op.create_table('product_options',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('group_id', sa.UUID(), nullable=False),
@@ -352,28 +290,25 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_product_options'))
     )
     op.create_index(op.f('ix_product_options_group_id'), 'product_options', ['group_id'], unique=False)
-
-    # FKs circulares criadas após as tabelas.
     op.create_foreign_key('fk_tables_current_session', 'tables', 'table_sessions', ['current_session_id'], ['id'])
     op.create_foreign_key('fk_service_requests_order', 'service_requests', 'orders', ['order_id'], ['id'])
+
 
 def downgrade() -> None:
     op.drop_constraint('fk_service_requests_order', 'service_requests', type_='foreignkey')
     op.drop_constraint('fk_tables_current_session', 'tables', type_='foreignkey')
     op.drop_index(op.f('ix_product_options_group_id'), table_name='product_options')
     op.drop_table('product_options')
-    op.drop_index(op.f('ix_order_status_history_order_id'), table_name='order_status_history')
-    op.drop_table('order_status_history')
     op.drop_index(op.f('ix_order_items_order_id'), table_name='order_items')
     op.drop_table('order_items')
-    op.drop_index('uq_active_request_per_type', table_name='service_requests', postgresql_where=sa.text("status IN ('PENDENTE','ASSUMIDA','EM_ATENDIMENTO') AND type <> 'NOVO_PEDIDO'"))
+    op.drop_index('uq_active_request_per_type', table_name='service_requests', postgresql_where=sa.text("status = 'PENDENTE' AND type <> 'NOVO_PEDIDO'"))
     op.drop_index(op.f('ix_service_requests_session_id'), table_name='service_requests')
     op.drop_index(op.f('ix_service_requests_establishment_id'), table_name='service_requests')
     op.drop_index('ix_service_requests_est_status_created', table_name='service_requests')
     op.drop_table('service_requests')
     op.drop_index(op.f('ix_orders_session_id'), table_name='orders')
     op.drop_index(op.f('ix_orders_establishment_id'), table_name='orders')
-    op.drop_index('ix_orders_est_status_created', table_name='orders')
+    op.drop_index('ix_orders_est_created', table_name='orders')
     op.drop_table('orders')
     op.drop_index(op.f('ix_option_groups_product_id'), table_name='option_groups')
     op.drop_table('option_groups')
@@ -397,10 +332,9 @@ def downgrade() -> None:
     op.drop_table('tables')
     op.drop_index(op.f('ix_push_subscriptions_establishment_id'), table_name='push_subscriptions')
     op.drop_table('push_subscriptions')
-    op.drop_index(op.f('ix_promotions_establishment_id'), table_name='promotions')
-    op.drop_table('promotions')
-    op.drop_index(op.f('ix_coupons_establishment_id'), table_name='coupons')
-    op.drop_table('coupons')
+    op.drop_index(op.f('ix_notices_establishment_id'), table_name='notices')
+    op.drop_index('ix_notices_est_active', table_name='notices')
+    op.drop_table('notices')
     op.drop_index(op.f('ix_categories_establishment_id'), table_name='categories')
     op.drop_table('categories')
     op.drop_index('ix_outbox_unpublished', table_name='outbox_events', postgresql_where=sa.text('published_at IS NULL'))

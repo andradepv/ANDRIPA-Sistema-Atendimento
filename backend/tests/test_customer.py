@@ -1,6 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 
-from conftest import Customer, make_est, make_table, open_table, pg
+from conftest import Customer, open_table, pg
 
 
 def test_public_table_free_is_unavailable(client, world):
@@ -9,7 +9,7 @@ def test_public_table_free_is_unavailable(client, world):
     r = client.get(f"/api/v1/public/tables/{code}")
     assert r.status_code == 200
     assert r.json()["available"] is False and r.json()["table_number"] == 1
-    j = client.post(f"/api/v1/public/tables/{code}/join", json={})
+    j = client.post(f"/api/v1/public/tables/{code}/join")
     assert j.status_code == 409 and j.json()["error"]["code"] == "table_not_open"
 
 
@@ -23,7 +23,7 @@ def test_public_payload_has_no_internal_ids(client, world):
     tid, code = world["tables"][0]
     open_table(world["atendente"], tid)
     body = client.get(f"/api/v1/public/tables/{code}").text
-    assert tid not in body and "join_code\":\"" not in body
+    assert tid not in body and "session" not in body
 
 
 def test_call_attendant_flow_and_dedup(client, world):
@@ -38,9 +38,9 @@ def test_call_attendant_flow_and_dedup(client, world):
     staff = world["atendente"].get("/api/v1/service-requests").json()
     assert staff["total"] == 1 and staff["items"][0]["table_number"] == 1
     rid = r1.json()["id"]
-    assert world["atendente"].post(f"/api/v1/service-requests/{rid}/claim").json()["status"] == "ASSUMIDA"
-    assert world["atendente"].post(f"/api/v1/service-requests/{rid}/complete").json()["status"] == "CONCLUIDA"
-    # Concluído o chamado, um novo chamado legítimo é permitido.
+    done = world["atendente"].post(f"/api/v1/service-requests/{rid}/complete").json()
+    assert done["status"] == "CONCLUIDA" and done["completed_at"] >= done["created_at"]
+    # Atendido o chamado, um novo chamado legítimo é permitido.
     r3 = c.post("/api/v1/public/service-requests", json={"type": "CHAMAR_ATENDENTE"})
     assert r3.status_code == 201 and r3.json()["id"] != rid
     state = c.get("/api/v1/public/session").json()
@@ -92,22 +92,6 @@ def test_customer_cannot_touch_other_table(client, world):
     r = a.post("/api/v1/public/service-requests", json={"type": "CHAMAR_ATENDENTE", "session_id": rid})
     assert r.status_code == 422
     assert a.get("/api/v1/public/session").json()["table_number"] == 1
-
-
-def test_join_code_required(client):
-    est = make_est("Bar Código", join_code_required=True)
-    from conftest import Actor, make_user
-    att = Actor(client, make_user(est, "ATENDENTE", pin="4444"))
-    tid, code = make_table(est, 1)
-    jc = open_table(att, tid, pin="4444").json()["session"]["join_code"]
-    assert client.get(f"/api/v1/public/tables/{code}").json()["join_code_required"] is True
-    assert client.post(f"/api/v1/public/tables/{code}/join", json={}).status_code == 403
-    bad = "0000" if jc != "0000" else "1111"
-    assert client.post(f"/api/v1/public/tables/{code}/join", json={"join_code": bad}).status_code == 403
-    assert client.post(f"/api/v1/public/tables/{code}/join", json={"join_code": jc}).status_code == 200
-    # Força bruta é limitada.
-    codes = [client.post(f"/api/v1/public/tables/{code}/join", json={"join_code": bad}).status_code for _ in range(12)]
-    assert 429 in codes
 
 
 def test_customer_request_rate_limit(client, world):

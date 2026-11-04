@@ -1,7 +1,12 @@
 # Andripa — Fase 1: Análise e arquitetura
 
+> **Atualização de 04/11/2026:** o MVP foi simplificado (página da mesa com “Cliente” / “Liberar mesa”,
+> login por usuário + PIN, solicitações só feitas/resolvidas, uma aba de Salão, avisos no lugar de
+> promoções e cupons). Onde este documento divergir, valem [ADR-0007](adr/0007-mvp-simplificado.md) e os
+> documentos 02 a 05. O texto abaixo é o planejamento original da Fase 1.
+>
 > Sistema web de atendimento para bares e restaurantes. Este documento é a base técnica do projeto
-> e reflete o que foi efetivamente implementado. Diferenças em relação ao documento de requisitos
+> e reflete o que foi implementado na primeira versão. Diferenças em relação ao documento de requisitos
 > (`Ideia.md`) estão justificadas na seção 13 e em `docs/adr/`.
 
 ## 1. Resumo funcional

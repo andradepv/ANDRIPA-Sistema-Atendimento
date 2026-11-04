@@ -38,7 +38,7 @@ aws ecs run-task --cluster andripa-staging --task-definition andripa-staging-mig
 docker run --rm <ecr>:<sha> python -m app.cli gen-vapid
 aws secretsmanager put-secret-value --secret-id andripa-staging/app --secret-string '{...com as chaves...}'
 # estabelecimento e primeiro administrador (tarefa avulsa com o comando abaixo)
-python -m app.cli bootstrap --establishment "Nome do Bar" --tz America/Manaus --admin-name "..." --admin-email ...
+python -m app.cli bootstrap --establishment "Nome do Bar" --tz America/Manaus --admin-name "..." --admin-username ...
 ```
 Depois: `npm run build` no frontend, `aws s3 sync` e invalidação do CloudFront (feito pelo CI).
 

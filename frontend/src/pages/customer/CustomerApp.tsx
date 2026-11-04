@@ -1,18 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, errorMessage, newIdempotencyKey } from "../../api/http";
-import type {
-  CouponValidation,
-  CustomerSession,
-  MenuCategory,
-  Order,
-  Product,
-  Promotion,
-  PublicTable,
-  RealtimeEvent,
-  ServiceRequest,
-} from "../../api/types";
+import type { CustomerSession, MenuCategory, Notice, Product, PublicTable, RealtimeEvent, ServiceRequest } from "../../api/types";
 import { Dialog, useToast } from "../../components/ui";
-import { clock, money, orderStatusLabel, requestStatusLabel } from "../../lib/format";
+import { clock, money, orderSummary, requestStatusLabel, requestTitle } from "../../lib/format";
+import { navigate } from "../../lib/router";
 import { openSocket, upsertVersioned, type SocketStatus } from "../../realtime/socket";
 
 const tokenKey = (code: string) => `andripa:tok:${code}`;
@@ -36,7 +27,6 @@ type Phase =
   | { kind: "loading" }
   | { kind: "notfound" }
   | { kind: "unavailable"; table: PublicTable }
-  | { kind: "join"; table: PublicTable }
   | { kind: "ended"; table: PublicTable | null }
   | { kind: "active"; token: string };
 
@@ -54,28 +44,17 @@ export function CustomerApp({ code }: { code: string }) {
         setPhase({ kind: "unavailable", table: t });
         return;
       }
-      const tok = loadToken(code);
-      if (tok) {
-        setPhase({ kind: "active", token: tok });
-        return;
+      let tok = loadToken(code);
+      if (!tok) {
+        tok = (await api<{ token: string }>(`/public/tables/${code}/join`, { body: {} })).token;
+        saveToken(code, tok);
       }
-      if (t.join_code_required) setPhase({ kind: "join", table: t });
-      else await join(undefined, t);
+      setPhase({ kind: "active", token: tok });
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) setPhase({ kind: "notfound" });
       else setPhase({ kind: "ended", table: null });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
-
-  const join = async (joinCode: string | undefined, t: PublicTable) => {
-    const r = await api<{ token: string }>(`/public/tables/${code}/join`, {
-      body: joinCode ? { join_code: joinCode } : {},
-    });
-    saveToken(code, r.token);
-    setPhase({ kind: "active", token: r.token });
-    void t;
-  };
 
   useEffect(() => {
     void check();
@@ -86,36 +65,29 @@ export function CustomerApp({ code }: { code: string }) {
     setPhase({ kind: "ended", table });
   }, [code, table]);
 
+  const back = () => navigate(`/m/${code}`);
   if (phase.kind === "loading") return <Splash text="Abrindo a mesa…" />;
   if (phase.kind === "notfound")
     return <Splash title="Mesa não encontrada" text="Leia o QR Code de novo ou aproxime o celular da etiqueta da mesa." />;
-  if (phase.kind === "unavailable")
-    return (
-      <Splash
-        title={`Mesa ${phase.table.table_number}`}
-        text="Esta mesa ainda não está aberta para atendimento digital. Peça a um atendente para abrir a mesa e leia o QR Code novamente."
-        action={{ label: "Verificar de novo", onClick: () => void check() }}
-        establishment={phase.table.establishment_name}
-      />
-    );
+  if (phase.kind === "unavailable") return <NotOpen table={phase.table} onBack={back} onRetry={() => void check()} />;
   if (phase.kind === "ended")
     return (
       <Splash
         title="Atendimento encerrado"
-        text="A conta desta mesa foi fechada. Obrigado pela visita! Se você ainda está na mesa, peça para abri-la de novo."
-        action={{ label: "Verificar de novo", onClick: () => void check() }}
+        text="A conta desta mesa foi finalizada. Obrigado pela visita!"
+        action={{ label: "Voltar ao início da mesa", onClick: back }}
         establishment={phase.table?.establishment_name}
       />
     );
-  if (phase.kind === "join") return <JoinScreen table={phase.table} onJoin={(c) => join(c, phase.table)} />;
   return <ActiveSession token={phase.token} onEnded={onEnded} />;
 }
 
-function Splash(props: {
+export function Splash(props: {
   title?: string;
   text: string;
   establishment?: string;
   action?: { label: string; onClick: () => void };
+  secondary?: { label: string; onClick: () => void };
 }) {
   return (
     <main className="c-shell c-center">
@@ -128,64 +100,31 @@ function Splash(props: {
           {props.action.label}
         </button>
       )}
+      {props.secondary && (
+        <button className="btn btn--ghost" onClick={props.secondary.onClick}>
+          {props.secondary.label}
+        </button>
+      )}
     </main>
   );
 }
 
-function JoinScreen({ table, onJoin }: { table: PublicTable; onJoin: (code: string) => Promise<void> }) {
-  const [value, setValue] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+/** Mesa ainda não liberada pela equipe. */
+export function NotOpen({ table, onBack, onRetry }: { table: PublicTable; onBack: () => void; onRetry: () => void }) {
   return (
-    <main className="c-shell c-center">
-      <div className="tile-band" aria-hidden="true" />
-      <p className="c-est">{table.establishment_name}</p>
-      <h1 className="c-title">Mesa {table.table_number}</h1>
-      <form
-        className="join"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError(null);
-          try {
-            await onJoin(value);
-          } catch (err) {
-            setError(errorMessage(err));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <label htmlFor="jc">Digite o código de 4 números que o atendente informou</label>
-        <input
-          id="jc"
-          className="join__code"
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          pattern="\d{4}"
-          maxLength={4}
-          value={value}
-          onChange={(e) => setValue(e.target.value.replace(/\D/g, ""))}
-          aria-invalid={!!error}
-          aria-describedby={error ? "jc-err" : undefined}
-          required
-        />
-        {error && (
-          <p id="jc-err" className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-        <button className="btn btn--primary btn--block" disabled={busy || value.length !== 4}>
-          {busy ? "Entrando…" : "Entrar na mesa"}
-        </button>
-      </form>
-    </main>
+    <Splash
+      title={`Mesa ${table.table_number}`}
+      text="Esta mesa ainda não foi liberada. Peça a um atendente para liberar a mesa e tente de novo."
+      establishment={table.establishment_name}
+      action={{ label: "Tentar de novo", onClick: onRetry }}
+      secondary={{ label: "Voltar", onClick: onBack }}
+    />
   );
 }
 
 // ---------------------------------------------------------------------------------------------
 
-type Tab = "mesa" | "cardapio" | "comanda" | "novidades";
+type Tab = "mesa" | "cardapio" | "novidades";
 interface CartLine {
   key: string;
   product: Product;
@@ -206,6 +145,7 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
   const [conn, setConn] = useState<SocketStatus>("connecting");
   const [menu, setMenu] = useState<MenuCategory[] | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [noticesVersion, setNoticesVersion] = useState(0);
 
   const ended = useCallback(
     (e: unknown) => {
@@ -278,11 +218,8 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
         else if (ev.type === "request.updated") {
           const r = ev.data!.request as ServiceRequest;
           setS((cur) => (cur ? { ...cur, requests: upsertVersioned(cur.requests, r) } : cur));
-        } else if (ev.type === "order.updated") {
-          const o = ev.data!.order as Order;
-          setS((cur) => (cur ? { ...cur, orders: upsertVersioned(cur.orders, o) } : cur));
-          void refresh(); // total da comanda
         } else if (ev.type === "menu.updated") void loadMenu();
+        else if (ev.type === "notices.updated") setNoticesVersion((v) => v + 1);
       },
     });
   }, [token, refresh, loadMenu, onEnded]);
@@ -317,14 +254,13 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
             token={token}
             onSent={() => {
               setCart([]);
-              setTab("comanda");
+              setTab("mesa");
               void refresh();
             }}
             onEnded={ended}
           />
         )}
-        {tab === "comanda" && <BillTab s={s} />}
-        {tab === "novidades" && <NewsTab s={s} token={token} />}
+        {tab === "novidades" && <NewsTab s={s} token={token} noticesVersion={noticesVersion} onEnded={ended} />}
       </main>
 
       <nav className="c-nav" aria-label="Seções">
@@ -332,7 +268,6 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
           [
             ["mesa", "Mesa"],
             ["cardapio", cartCount ? `Cardápio (${cartCount})` : "Cardápio"],
-            ["comanda", "Comanda"],
             ["novidades", "Novidades"],
           ] as [Tab, string][]
         ).map(([k, label]) => (
@@ -345,8 +280,8 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
   );
 }
 
-function activeOf(s: CustomerSession, type: ServiceRequest["type"]): ServiceRequest | undefined {
-  return s.requests.find((r) => r.type === type && ["PENDENTE", "ASSUMIDA", "EM_ATENDIMENTO"].includes(r.status));
+function pendingOf(s: CustomerSession, type: ServiceRequest["type"]): ServiceRequest | undefined {
+  return s.requests.find((r) => r.type === type && r.status === "PENDENTE");
 }
 
 function HomeTab(props: {
@@ -361,9 +296,8 @@ function HomeTab(props: {
   const [confirm, setConfirm] = useState<null | "CHAMAR_ATENDENTE" | "PEDIR_CONTA">(null);
   const [busy, setBusy] = useState(false);
   const keyRef = useRef<string | null>(null);
-  const call = activeOf(s, "CHAMAR_ATENDENTE");
-  const bill = activeOf(s, "PEDIR_CONTA");
-  const billRequested = !!bill || s.table_status === "ENCERRAMENTO_SOLICITADO";
+  const call = pendingOf(s, "CHAMAR_ATENDENTE");
+  const billRequested = !!pendingOf(s, "PEDIR_CONTA");
 
   const send = async () => {
     if (!confirm) return;
@@ -399,14 +333,12 @@ function HomeTab(props: {
       </h2>
       <div className="big-actions">
         <button className="big-btn big-btn--call" onClick={() => setConfirm("CHAMAR_ATENDENTE")} disabled={!!call}>
-          <span className="big-btn__title">{call ? "Atendente a caminho" : "Chamar atendente"}</span>
-          <span className="big-btn__sub">
-            {call ? `${requestStatusLabel[call.status]} · ${call.assigned_to_name ?? "aguardando"}` : "Um toque avisa a equipe"}
-          </span>
+          <span className="big-btn__title">{call ? "Atendente avisado" : "Chamar atendente"}</span>
+          <span className="big-btn__sub">{call ? `Chamado às ${clock(call.created_at, s.timezone)}` : "Um toque avisa a equipe"}</span>
         </button>
         <button className="big-btn big-btn--bill" onClick={() => setConfirm("PEDIR_CONTA")} disabled={billRequested}>
           <span className="big-btn__title">{billRequested ? "Conta solicitada" : "Pedir a conta"}</span>
-          <span className="big-btn__sub">{billRequested ? "O caixa já foi avisado" : `Total até agora ${money(s.total_cents)}`}</span>
+          <span className="big-btn__sub">{billRequested ? "O caixa já foi avisado" : "Avisa o caixa para fechar a mesa"}</span>
         </button>
         {s.orders_enabled && (
           <button className="btn btn--ghost btn--block" onClick={props.goMenu}>
@@ -425,35 +357,30 @@ function HomeTab(props: {
       )}
 
       <h3 className="c-h3">Acompanhamento</h3>
-      {s.requests.filter((r) => r.type !== "NOVO_PEDIDO").length === 0 && s.orders.length === 0 ? (
+      {s.requests.length === 0 ? (
         <p className="empty">Nada por aqui ainda. Seus chamados e pedidos aparecem aqui em tempo real.</p>
       ) : (
         <ul className="timeline">
-          {[...s.requests.filter((r) => r.type !== "NOVO_PEDIDO"), ...s.orders]
-            .sort((a, b) => b.created_at.localeCompare(a.created_at))
-            .slice(0, 12)
-            .map((x) =>
-              "number" in x ? (
-                <li key={x.id} className={`timeline__item st-${x.status}`}>
-                  <span>Pedido nº {x.number}</span>
-                  <span className="pill">{orderStatusLabel[x.status]}</span>
-                  <time>{clock(x.created_at, s.timezone)}</time>
-                </li>
-              ) : (
-                <li key={x.id} className={`timeline__item st-${x.status}`}>
-                  <span>{x.type === "PEDIR_CONTA" ? "Conta" : "Chamado"}</span>
-                  <span className="pill">{requestStatusLabel[x.status]}</span>
-                  <time>{clock(x.created_at, s.timezone)}</time>
-                </li>
-              ),
-            )}
+          {s.requests.slice(0, 20).map((r) => (
+            <li key={r.id} className={`timeline__item st-${r.status}`}>
+              <span>
+                {requestTitle(r)}
+                {r.order && <span className="muted small timeline__sub">{orderSummary(r)}</span>}
+              </span>
+              <span className="pill">{requestStatusLabel(r)}</span>
+              <time>
+                {clock(r.created_at, s.timezone)}
+                {r.completed_at && r.status === "CONCLUIDA" && ` → ${clock(r.completed_at, s.timezone)}`}
+              </time>
+            </li>
+          ))}
         </ul>
       )}
 
       <Dialog open={!!confirm} title={confirm === "PEDIR_CONTA" ? "Pedir a conta?" : "Chamar um atendente?"} onClose={() => setConfirm(null)}>
         <p>
           {confirm === "PEDIR_CONTA"
-            ? `O caixa receberá o pedido de fechamento da mesa ${s.table_number}. Você ainda pode chamar o atendente depois.`
+            ? `O caixa será avisado para fechar a conta da mesa ${s.table_number}.`
             : `Um atendente virá até a mesa ${s.table_number}.`}
         </p>
         <div className="dialog__actions">
@@ -492,7 +419,7 @@ function MenuTab(props: {
     setSending(true);
     keyRef.current ??= newIdempotencyKey("ord");
     try {
-      await api<Order>("/public/orders", {
+      await api<ServiceRequest>("/public/orders", {
         bearer: props.token,
         idempotencyKey: keyRef.current,
         body: {
@@ -505,7 +432,7 @@ function MenuTab(props: {
         },
       });
       keyRef.current = null;
-      toast("Pedido recebido pela cozinha.", "ok");
+      toast("Pedido enviado! A equipe vai repassá-lo à cozinha.", "ok");
       setReviewing(false);
       props.onSent();
     } catch (e) {
@@ -699,52 +626,13 @@ function ProductDialog(props: { product: Product | null; onClose: () => void; on
         <button
           className="btn btn--primary btn--block"
           disabled={problems.length > 0}
-          onClick={() => props.onAdd({ key: crypto.randomUUID(), product: p, quantity: qty, optionIds: opts, notes })}
+          // crypto.randomUUID só existe em HTTPS; getRandomValues (usado aqui) funciona também na rede local.
+          onClick={() => props.onAdd({ key: newIdempotencyKey("item"), product: p, quantity: qty, optionIds: opts, notes })}
         >
           Adicionar · {money(unit * qty)}
         </button>
       </div>
     </Dialog>
-  );
-}
-
-function BillTab({ s }: { s: CustomerSession }) {
-  const live = s.orders.filter((o) => o.status !== "CANCELADO");
-  return (
-    <section aria-labelledby="bill-h">
-      <h2 id="bill-h" className="c-h2">
-        Comanda da mesa {s.table_number}
-      </h2>
-      {s.orders.length === 0 ? (
-        <p className="empty">Nenhum pedido feito pelo celular ainda. Itens pedidos ao atendente aparecem na conta do caixa.</p>
-      ) : (
-        <ul className="bill">
-          {s.orders.map((o) => (
-            <li key={o.id} className={`bill__order ${o.status === "CANCELADO" ? "is-cancelled" : ""}`}>
-              <div className="bill__head">
-                <span>
-                  Pedido nº {o.number} · {clock(o.created_at, s.timezone)}
-                </span>
-                <span className={`pill st-${o.status}`}>{orderStatusLabel[o.status]}</span>
-              </div>
-              {o.items.map((i) => (
-                <div key={i.id} className="bill__item">
-                  <span>
-                    {i.quantity}× {i.product_name}
-                    {i.options.length > 0 && <span className="muted"> + {i.options.map((x) => x.name).join(", ")}</span>}
-                  </span>
-                  <span>{money(i.line_total_cents)}</span>
-                </div>
-              ))}
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="bill__total">
-        Total dos pedidos <strong>{money(s.total_cents)}</strong>
-      </p>
-      {live.length > 0 && <p className="muted small">Cupons e formas de pagamento são aplicados pelo caixa no fechamento.</p>}
-    </section>
   );
 }
 
@@ -756,15 +644,20 @@ function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-function NewsTab({ s, token }: { s: CustomerSession; token: string }) {
+function NewsTab(props: { s: CustomerSession; token: string; noticesVersion: number; onEnded: (e: unknown) => boolean }) {
+  const { s, token, onEnded } = props;
   const toast = useToast();
-  const [promos, setPromos] = useState<Promotion[] | null>(null);
-  const [code, setCode] = useState("");
-  const [coupon, setCoupon] = useState<CouponValidation | null>(null);
+  const [notices, setNotices] = useState<Notice[] | null>(null);
   const [pushState, setPushState] = useState<"unsupported" | "idle" | "on" | "denied" | "busy">("idle");
+  const [calling, setCalling] = useState(false);
+  const keyRef = useRef<string | null>(null);
+  const called = !!pendingOf(s, "CHAMAR_ATENDENTE");
 
   useEffect(() => {
-    api<Promotion[]>("/public/promotions", { bearer: token }).then(setPromos).catch(() => setPromos([]));
+    api<Notice[]>("/public/notices", { bearer: token }).then(setNotices).catch(() => setNotices([]));
+  }, [token, props.noticesVersion]);
+
+  useEffect(() => {
     const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window && !!s.push_public_key;
     if (!supported) {
       setPushState("unsupported");
@@ -775,7 +668,21 @@ function NewsTab({ s, token }: { s: CustomerSession; token: string }) {
       .then((r) => r.pushManager.getSubscription())
       .then((sub) => sub && setPushState("on"))
       .catch(() => undefined);
-  }, [token, s.push_public_key]);
+  }, [s.push_public_key]);
+
+  const call = async () => {
+    setCalling(true);
+    keyRef.current ??= newIdempotencyKey("req");
+    try {
+      await api("/public/service-requests", { body: { type: "CHAMAR_ATENDENTE" }, bearer: token, idempotencyKey: keyRef.current });
+      keyRef.current = null;
+      toast("Chamado enviado. Um atendente já foi avisado.", "ok");
+    } catch (e) {
+      if (!onEnded(e)) toast(errorMessage(e), "error");
+    } finally {
+      setCalling(false);
+    }
+  };
 
   const subscribe = async () => {
     setPushState("busy");
@@ -818,78 +725,51 @@ function NewsTab({ s, token }: { s: CustomerSession; token: string }) {
       <h2 id="news-h" className="c-h2">
         Novidades
       </h2>
-      {promos === null ? (
+      {notices === null ? (
         <p className="empty">Carregando…</p>
-      ) : promos.length === 0 ? (
-        <p className="empty">Nenhuma promoção ou evento em vigor agora.</p>
+      ) : notices.length === 0 ? (
+        <p className="empty">Nenhuma novidade no momento.</p>
       ) : (
-        <ul className="promos">
-          {promos.map((p) => (
-            <li key={p.id} className={`promo promo--${p.kind.toLowerCase()}`}>
-              {p.image_url && <img src={p.image_url} alt="" className="promo__img" loading="lazy" />}
-              <strong className="promo__title">{p.title}</strong>
-              {p.description && <p>{p.description}</p>}
-              {p.conditions && <p className="muted small">{p.conditions}</p>}
-              <p className="muted small">Válido até {new Date(p.ends_at).toLocaleString("pt-BR", { timeZone: s.timezone, dateStyle: "short", timeStyle: "short" })}</p>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <form
-        className="coupon"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          try {
-            setCoupon(await api<CouponValidation>("/public/coupons/validate", { bearer: token, body: { code } }));
-          } catch (err) {
-            toast(errorMessage(err), "error");
-          }
-        }}
-      >
-        <label className="field">
-          <span className="field__label">Tem um cupom?</span>
-          <div className="inline">
-            <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={32} placeholder="CÓDIGO" />
-            <button className="btn" disabled={code.length < 3}>
-              Verificar
+        <>
+          <ul className="promos">
+            {notices.map((n) => (
+              <li key={n.id} className="promo">
+                <strong className="promo__title">{n.title}</strong>
+                {n.message && <p>{n.message}</p>}
+              </li>
+            ))}
+          </ul>
+          <div className="news-cta">
+            <p className="muted">Quer saber mais ou aproveitar? Chame um atendente.</p>
+            <button className="btn btn--primary btn--block" onClick={() => void call()} disabled={calling || called}>
+              {called ? "Atendente avisado" : calling ? "Chamando…" : "Chamar atendente"}
             </button>
           </div>
-        </label>
-        {coupon && (
-          <p role="status" className={coupon.valid ? "ok-text" : "form-error"}>
-            {coupon.valid
-              ? `Cupom válido${coupon.estimated_discount_cents ? `: desconto estimado de ${money(coupon.estimated_discount_cents)}` : ""}. Informe o código ao caixa no fechamento.`
-              : coupon.reason}
-          </p>
-        )}
-      </form>
+        </>
+      )}
 
-      <div className="push-box">
-        <h3 className="c-h3">Notificações</h3>
-        {pushState === "unsupported" && (
-          <p className="muted small">
-            Este navegador não oferece notificações aqui. No iPhone, adicione esta página à tela de início para habilitá-las.
-          </p>
-        )}
-        {pushState === "denied" && <p className="muted small">As notificações estão bloqueadas nas configurações do navegador.</p>}
-        {(pushState === "idle" || pushState === "busy") && (
-          <>
-            <p className="small">Receba avisos de promoções e eventos deste estabelecimento. Você pode cancelar quando quiser.</p>
-            <button className="btn" onClick={() => void subscribe()} disabled={pushState === "busy"}>
-              Quero receber novidades
-            </button>
-          </>
-        )}
-        {pushState === "on" && (
-          <>
-            <p className="small">Você recebe novidades deste estabelecimento.</p>
-            <button className="btn btn--ghost" onClick={() => void unsubscribe()}>
-              Parar de receber
-            </button>
-          </>
-        )}
-      </div>
+      {pushState !== "unsupported" && (
+        <div className="push-box">
+          <h3 className="c-h3">Notificações</h3>
+          {pushState === "denied" && <p className="muted small">As notificações estão bloqueadas nas configurações do navegador.</p>}
+          {(pushState === "idle" || pushState === "busy") && (
+            <>
+              <p className="small">Receba avisos de novidades deste estabelecimento. Você pode cancelar quando quiser.</p>
+              <button className="btn" onClick={() => void subscribe()} disabled={pushState === "busy"}>
+                Quero receber novidades
+              </button>
+            </>
+          )}
+          {pushState === "on" && (
+            <>
+              <p className="small">Você recebe novidades deste estabelecimento.</p>
+              <button className="btn btn--ghost" onClick={() => void unsubscribe()}>
+                Parar de receber
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </section>
   );
 }

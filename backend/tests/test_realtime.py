@@ -17,7 +17,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from conftest import TEST_REDIS, Actor, Customer, open_table
+from conftest import TEST_REDIS, Actor, Customer, open_table, open_with_pin
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
@@ -166,18 +166,18 @@ def test_customer_ws_updates_and_session_close(client, world, instances, menu):
     open_table(world["atendente"], tid)
     cust = Customer(client, code)
     order = cust.post("/api/v1/public/orders", json={"items": [{"product_id": menu["agua"]["id"], "quantity": 1}]}).json()
+    bill = cust.post("/api/v1/public/service-requests", json={"type": "PEDIR_CONTA"}).json()
     sid = order["session_id"]
 
     async def run():
         ws = await customer_ws(b, cust.token)
-        r = await asyncio.to_thread(post, a, f"/api/v1/orders/{order['id']}/status", world["atendente"].headers(),
-                                    {"status": "ENTREGUE"})
+        r = await asyncio.to_thread(post, a, f"/api/v1/service-requests/{order['id']}/complete",
+                                    world["atendente"].headers())
         assert r.status_code == 200
-        ev = await recv_event(ws, lambda m: m.get("type") == "order.updated"
-                              and m["data"]["order"]["status"] == "ENTREGUE")
-        assert ev["data"]["order"]["id"] == order["id"]
-        r = await asyncio.to_thread(post, a, f"/api/v1/table-sessions/{sid}/close", world["caixa"].headers(),
-                                    {"payment_method": "PIX"})
+        ev = await recv_event(ws, lambda m: m.get("type") == "request.updated"
+                              and m["data"]["request"]["status"] == "CONCLUIDA")
+        assert ev["data"]["request"]["id"] == order["id"]  # “repassado à cozinha” chega ao celular
+        r = await asyncio.to_thread(post, a, f"/api/v1/service-requests/{bill['id']}/complete", world["caixa"].headers())
         assert r.status_code == 200
         ev = await recv_event(ws, lambda m: m.get("type") == "session.closed")
         assert ev["data"]["session_id"] == sid
@@ -193,6 +193,24 @@ def test_customer_ws_updates_and_session_close(client, world, instances, menu):
         assert exc2.value.rcvd.code == 4001
 
     asyncio.run(run())
+
+
+def test_pin_open_reaches_panel(client, world, instances):
+    """Mesa liberada pelo PIN na página da mesa aparece na hora no painel de outra instância."""
+    a, b = instances
+    tid, code = world["tables"][2]
+
+    async def run():
+        async with staff_ws(b, world["caixa"]) as ws:
+            await ws.recv()
+            r = await asyncio.to_thread(httpx.post, f"{a}/api/v1/public/tables/{code}/open", json={"pin": "3333"})
+            assert r.status_code == 201
+            ev = await recv_event(ws, lambda m: m.get("type") == "table.updated"
+                                  and m["data"]["table"]["id"] == tid)
+            assert ev["data"]["table"]["status"] == "OCUPADA"
+
+    asyncio.run(run())
+    assert open_with_pin(client, code, "3333").status_code == 409
 
 
 def test_ws_authorization(client, world, instances):
@@ -250,9 +268,11 @@ def test_reconnect_recovers_state(client, world, instances):
             snap = (await asyncio.to_thread(httpx.get, b + "/api/v1/service-requests", headers=caixa.headers())).json()
             assert {i["id"] for i in snap["items"]} == {r1["id"], r2["id"]}
             # E novos eventos continuam chegando após reconectar.
-            await asyncio.to_thread(post, a, f"/api/v1/service-requests/{r1['id']}/claim", caixa.headers())
+            await asyncio.to_thread(post, a, f"/api/v1/service-requests/{r1['id']}/complete", caixa.headers())
+            # Filtra pelo status: o evento de criação (PENDENTE) pode chegar atrasado pelo outbox.
             ev = await recv_event(ws2, lambda m: m.get("type") == "request.updated"
-                                  and m["data"]["request"]["id"] == r1["id"])
-            assert ev["data"]["request"]["status"] == "ASSUMIDA"
+                                  and m["data"]["request"]["id"] == r1["id"]
+                                  and m["data"]["request"]["status"] == "CONCLUIDA")
+            assert ev["data"]["request"]["completed_by_name"].startswith("Caixa")
 
     asyncio.run(run())

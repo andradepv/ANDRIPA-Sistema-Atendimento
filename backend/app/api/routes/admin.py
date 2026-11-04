@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,29 +15,31 @@ from app.db.session import get_db
 from app.models import AuditLog, Establishment, PushSubscription, StaffSession, User
 from app.schemas import (
     AuditOut,
-    CouponIn,
-    CouponOut,
     EstablishmentOut,
     EstablishmentPatch,
+    NoticeCreatedOut,
+    NoticeIn,
+    NoticeOut,
+    NoticePatch,
     Page,
-    PromotionIn,
-    PromotionOut,
-    PushBroadcastIn,
-    PushBroadcastOut,
     UserCreate,
     UserOut,
     UserPatch,
 )
-from app.services import promotions as promo_svc
-from app.services import push as push_svc
+from app.services import notices as notice_svc
 from app.services.audit import audit
 from app.services.events import STAFF, emit
 from app.services.serializers import user_out
+from app.services.tables import find_user_by_pin
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 # ---------- usuários ----------
+def _pin_taken() -> AppError:
+    return conflict("pin_taken", "Este PIN já é usado por outra pessoa da equipe. Escolha outro.")
+
+
 @router.get("/users", response_model=list[UserOut])
 async def list_users(ctx: StaffCtx = Depends(require(Perm.USERS_MANAGE)), db: AsyncSession = Depends(get_db)) -> list[UserOut]:
     rows = (await db.execute(select(User).where(User.establishment_id == ctx.establishment_id)
@@ -48,15 +50,17 @@ async def list_users(ctx: StaffCtx = Depends(require(Perm.USERS_MANAGE)), db: As
 @router.post("/users", response_model=UserOut, status_code=201)
 async def create_user(data: UserCreate, ctx: StaffCtx = Depends(require(Perm.USERS_MANAGE)),
                       db: AsyncSession = Depends(get_db)) -> UserOut:
-    u = User(establishment_id=ctx.establishment_id, name=data.name, email=data.email, role=data.role,
-             password_hash=hash_secret(data.password), pin_hash=hash_secret(data.pin) if data.pin else None)
+    if await find_user_by_pin(db, ctx.establishment_id, data.pin):
+        raise _pin_taken()
+    u = User(establishment_id=ctx.establishment_id, name=data.name, username=data.username, role=data.role,
+             pin_hash=hash_secret(data.pin))
     db.add(u)
     try:
         await db.flush()
     except IntegrityError as e:
-        raise conflict("email_taken", "E-mail já cadastrado.") from e
+        raise conflict("username_taken", "Este usuário já existe. Escolha outro nome de usuário.") from e
     audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="user.create",
-          target_type="user", target_id=u.id, details={"role": data.role.value, "email": data.email})
+          target_type="user", target_id=u.id, details={"role": data.role.value, "username": data.username})
     await db.commit()
     return user_out(u)
 
@@ -83,13 +87,11 @@ async def patch_user(user_id: uuid.UUID, data: UserPatch, ctx: StaffCtx = Depend
     if data.active is not None and data.active != u.active:
         u.active = data.active
         revoke = revoke or not data.active
-    if data.password:
-        u.password_hash, revoke = hash_secret(data.password), True
     if data.pin:
-        u.pin_hash = hash_secret(data.pin)
-    if data.clear_pin:
-        u.pin_hash = None
-    if revoke:  # mudança de papel, desativação ou senha: encerra sessões existentes
+        if await find_user_by_pin(db, ctx.establishment_id, data.pin, exclude=u.id):
+            raise _pin_taken()
+        u.pin_hash, revoke = hash_secret(data.pin), True
+    if revoke:  # mudança de papel, desativação ou PIN: encerra sessões existentes
         ids = (await db.execute(update(StaffSession).where(StaffSession.user_id == u.id,
                                                            StaffSession.revoked_at.is_(None))
                                 .values(revoked_at=utcnow()).returning(StaffSession.id))).scalars().all()
@@ -97,8 +99,8 @@ async def patch_user(user_id: uuid.UUID, data: UserPatch, ctx: StaffCtx = Depend
              audience=())
     audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="user.update",
           target_type="user", target_id=u.id,
-          details={k: v for k, v in data.model_dump(exclude_unset=True).items() if k not in ("password", "pin")}
-          | {"password_changed": bool(data.password), "pin_changed": bool(data.pin or data.clear_pin)})
+          details={k: v for k, v in data.model_dump(exclude_unset=True).items() if k != "pin"}
+          | {"pin_changed": bool(data.pin)})
     await db.commit()
     await db.refresh(u)
     return user_out(u)
@@ -142,69 +144,39 @@ async def audit_logs(action: str | None = Query(default=None, max_length=64), li
                 total=int(total), limit=limit, offset=offset)
 
 
-# ---------- promoções / cupons ----------
-@router.get("/promotions", response_model=list[PromotionOut])
-async def list_promotions(ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                          db: AsyncSession = Depends(get_db)) -> list[PromotionOut]:
-    return await promo_svc.list_promotions(db, ctx.establishment_id)
+# ---------- avisos aos clientes (com push opcional) ----------
+@router.get("/notices", response_model=list[NoticeOut])
+async def list_notices(ctx: StaffCtx = Depends(require(Perm.NOTICES_MANAGE)),
+                       db: AsyncSession = Depends(get_db)) -> list[NoticeOut]:
+    return await notice_svc.list_all(db, ctx.establishment_id)
 
 
-@router.post("/promotions", response_model=PromotionOut, status_code=201)
-async def create_promotion(data: PromotionIn, ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                           db: AsyncSession = Depends(get_db)) -> PromotionOut:
-    out = await promo_svc.save_promotion(db, ctx, data)
+@router.post("/notices", response_model=NoticeCreatedOut, status_code=201)
+async def create_notice(data: NoticeIn, ctx: StaffCtx = Depends(require(Perm.NOTICES_MANAGE)),
+                        db: AsyncSession = Depends(get_db)) -> NoticeCreatedOut:
+    return await notice_svc.create(db, ctx, data)
+
+
+@router.patch("/notices/{notice_id}", response_model=NoticeOut)
+async def patch_notice(notice_id: uuid.UUID, data: NoticePatch, ctx: StaffCtx = Depends(require(Perm.NOTICES_MANAGE)),
+                       db: AsyncSession = Depends(get_db)) -> NoticeOut:
+    out = await notice_svc.patch(db, ctx, notice_id, data)
     await db.commit()
     return out
 
 
-@router.put("/promotions/{promo_id}", response_model=PromotionOut)
-async def update_promotion(promo_id: uuid.UUID, data: PromotionIn,
-                           ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                           db: AsyncSession = Depends(get_db)) -> PromotionOut:
-    out = await promo_svc.save_promotion(db, ctx, data, promo_id)
+@router.delete("/notices/{notice_id}", status_code=204)
+async def delete_notice(notice_id: uuid.UUID, ctx: StaffCtx = Depends(require(Perm.NOTICES_MANAGE)),
+                        db: AsyncSession = Depends(get_db)) -> Response:
+    await notice_svc.delete(db, ctx, notice_id)
     await db.commit()
-    return out
+    return Response(status_code=204)
 
 
-@router.get("/coupons", response_model=list[CouponOut])
-async def list_coupons(ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                       db: AsyncSession = Depends(get_db)) -> list[CouponOut]:
-    return await promo_svc.list_coupons(db, ctx.establishment_id)
-
-
-@router.post("/coupons", response_model=CouponOut, status_code=201)
-async def create_coupon(data: CouponIn, ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                        db: AsyncSession = Depends(get_db)) -> CouponOut:
-    out = await promo_svc.save_coupon(db, ctx, data)
-    await db.commit()
-    return out
-
-
-@router.put("/coupons/{coupon_id}", response_model=CouponOut)
-async def update_coupon(coupon_id: uuid.UUID, data: CouponIn, ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                        db: AsyncSession = Depends(get_db)) -> CouponOut:
-    out = await promo_svc.save_coupon(db, ctx, data, coupon_id)
-    await db.commit()
-    return out
-
-
-# ---------- push ----------
 @router.get("/push/stats")
-async def push_stats(ctx: StaffCtx = Depends(require(Perm.PUSH_SEND)), db: AsyncSession = Depends(get_db)) -> dict:
+async def push_stats(ctx: StaffCtx = Depends(require(Perm.NOTICES_MANAGE)), db: AsyncSession = Depends(get_db)) -> dict:
     from app.core.config import get_settings
     n = (await db.execute(select(func.count()).where(
         PushSubscription.establishment_id == ctx.establishment_id, PushSubscription.revoked_at.is_(None),
         PushSubscription.consent_marketing.is_(True)))).scalar_one()
     return {"enabled": get_settings().push_enabled, "subscribers": int(n)}
-
-
-@router.post("/push/broadcast", response_model=PushBroadcastOut)
-async def push_broadcast(data: PushBroadcastIn, ctx: StaffCtx = Depends(require(Perm.PUSH_SEND)),
-                         db: AsyncSession = Depends(get_db)) -> PushBroadcastOut:
-    from app.core.ratelimit import hit
-    await hit(f"broadcast:{ctx.establishment_id}", 5, 3600)
-    out = await push_svc.broadcast(db, ctx.establishment_id, data)
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="push.broadcast",
-          details={"title": data.title, **out.model_dump()})
-    await db.commit()
-    return out

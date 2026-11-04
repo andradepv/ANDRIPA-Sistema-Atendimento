@@ -19,7 +19,7 @@
 - [ ] CI verde no commit a publicar (lint, tipos, bandit, pip-audit, npm audit, testes, e2e)
 - [ ] Homologação publicada com a mesma imagem e smoke test ok
 - [ ] Migração testada em homologação; snapshot manual do RDS se houver mudança de esquema
-- [ ] `python -m app.cli bootstrap` executado; senha do admin trocada no primeiro acesso
+- [ ] `python -m app.cli bootstrap` executado; PIN do admin com 6+ dígitos e PINs da equipe cadastrados (únicos)
 - [ ] Equipe cadastrada com contas individuais e PIN pessoal
 
 ## Validação funcional em homologação (cenários de aceitação)

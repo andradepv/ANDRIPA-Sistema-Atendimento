@@ -7,7 +7,11 @@ export function Dialog(props: { open: boolean; title: string; onClose: () => voi
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
-    if (props.open && !d.open) d.showModal();
+    if (props.open && !d.open) {
+      d.showModal();
+      // showModal foca o primeiro botão (o “×”); campos marcados com data-autofocus têm prioridade.
+      d.querySelector<HTMLElement>("[data-autofocus]")?.focus();
+    }
     if (!props.open && d.open) d.close();
   }, [props.open]);
   return (

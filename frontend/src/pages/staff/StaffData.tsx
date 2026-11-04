@@ -1,14 +1,14 @@
 // Estado operacional compartilhado pelos painéis: snapshot REST + eventos em tempo real.
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../../api/http";
-import type { Me, Order, Page, RealtimeEvent, ServiceRequest, Table } from "../../api/types";
+import type { Me, Page, RealtimeEvent, ServiceRequest, Table } from "../../api/types";
 import { openSocket, upsertVersioned, type SocketStatus } from "../../realtime/socket";
 
 interface StaffData {
   me: Me;
   tables: Table[];
+  /** Solicitações aguardando resposta (chamados, pedidos e contas). */
   requests: ServiceRequest[];
-  orders: Order[];
   conn: SocketStatus;
   resync: () => Promise<void>;
   can: (perm: string) => boolean;
@@ -22,8 +22,6 @@ export const useStaff = () => {
   return v;
 };
 
-const ACTIVE = new Set(["PENDENTE", "ASSUMIDA", "EM_ATENDIMENTO"]);
-const PENDING_ORDERS = new Set(["RECEBIDO", "EM_PREPARO", "PRONTO"]);
 
 function beep(): void {
   try {
@@ -46,20 +44,14 @@ function beep(): void {
 export function StaffDataProvider({ me, children, onSessionEnded }: { me: Me; children: ReactNode; onSessionEnded: () => void }) {
   const [tables, setTables] = useState<Table[]>([]);
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
   const [conn, setConn] = useState<SocketStatus>("connecting");
   const [menuVersion, setMenuVersion] = useState(0);
   const known = useRef(new Set<string>());
 
   const resync = useCallback(async () => {
-    const [t, r, o] = await Promise.all([
-      api<Table[]>("/tables"),
-      api<Page<ServiceRequest>>("/service-requests?active=true&limit=500"),
-      api<Page<Order>>("/orders?active=true&limit=500"),
-    ]);
+    const [t, r] = await Promise.all([api<Table[]>("/tables"), api<Page<ServiceRequest>>("/service-requests?limit=500")]);
     setTables(t);
     setRequests(r.items);
-    setOrders(o.items);
     r.items.forEach((x) => known.current.add(x.id));
   }, []);
 
@@ -83,17 +75,10 @@ export function StaffDataProvider({ me, children, onSessionEnded }: { me: Me; ch
           const r = d.request as ServiceRequest;
           if (r.status === "PENDENTE" && !known.current.has(r.id)) beep();
           known.current.add(r.id);
-          setRequests((cur) => {
-            const next = upsertVersioned(cur, r);
-            return next.filter((x) => ACTIVE.has(x.status));
-          });
-        } else if (ev.type === "order.updated") {
-          const o = d.order as Order;
-          setOrders((cur) => upsertVersioned(cur, o).filter((x) => PENDING_ORDERS.has(x.status)));
+          setRequests((cur) => upsertVersioned(cur, r).filter((x) => x.status === "PENDENTE"));
         } else if (ev.type === "session.closed") {
           const sid = d.session_id as string;
           setRequests((cur) => cur.filter((x) => x.session_id !== sid));
-          setOrders((cur) => cur.filter((x) => x.session_id !== sid));
         } else if (ev.type === "menu.updated") {
           setMenuVersion((v) => v + 1);
         }
@@ -102,13 +87,13 @@ export function StaffDataProvider({ me, children, onSessionEnded }: { me: Me; ch
   }, [resync, onSessionEnded]);
 
   // Título da aba mostra chamados pendentes (útil com o painel em segundo plano).
-  const pending = requests.filter((r) => r.status === "PENDENTE").length;
+  const pending = requests.length;
   useEffect(() => {
     document.title = pending ? `(${pending}) Andripa — Painel` : "Andripa — Painel";
   }, [pending]);
 
   const can = useCallback((p: string) => me.permissions.includes(p), [me]);
   return (
-    <Ctx.Provider value={{ me, tables, requests, orders, conn, resync, can, menuVersion }}>{children}</Ctx.Provider>
+    <Ctx.Provider value={{ me, tables, requests, conn, resync, can, menuVersion }}>{children}</Ctx.Provider>
   );
 }

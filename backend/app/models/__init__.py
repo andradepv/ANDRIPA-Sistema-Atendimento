@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.core.permissions import Role
-from app.domain.states import OrderStatus, RequestStatus, RequestType, SessionStatus, TableStatus
+from app.domain.states import RequestStatus, RequestType, SessionStatus, TableStatus
 
 NAMING = {
     "ix": "ix_%(column_0_label)s",
@@ -72,7 +72,6 @@ class Establishment(Base):
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="America/Sao_Paulo")
-    join_code_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     orders_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = _updated()
@@ -83,10 +82,10 @@ class User(Base):
     id: Mapped[uuid.UUID] = _uuid_pk()
     establishment_id: Mapped[uuid.UUID] = _est_fk()
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True)
+    # Login da equipe: usuário + PIN. O PIN também libera mesas pela página da mesa.
+    username: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     role: Mapped[Role] = mapped_column(_enum(Role, "user_role"), nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    pin_hash: Mapped[str | None] = mapped_column(String(255))
+    pin_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = _updated()
@@ -137,21 +136,12 @@ class TableSession(Base):
     id: Mapped[uuid.UUID] = _uuid_pk()
     establishment_id: Mapped[uuid.UUID] = _est_fk()
     table_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tables.id", ondelete="RESTRICT"), nullable=False, index=True)
-    label: Mapped[str | None] = mapped_column(String(80))
     status: Mapped[SessionStatus] = mapped_column(_enum(SessionStatus, "session_status"), nullable=False,
                                                   default=SessionStatus.OPEN)
-    join_code: Mapped[str] = mapped_column(String(8), nullable=False)
     opened_at: Mapped[datetime] = _created()
     opened_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    close_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
-    subtotal_cents: Mapped[int | None] = mapped_column(Integer)
-    discount_cents: Mapped[int | None] = mapped_column(Integer)
-    total_cents: Mapped[int | None] = mapped_column(Integer)
-    payment_method: Mapped[str | None] = mapped_column(String(32))
-    coupon_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("coupons.id"))
-    close_note: Mapped[str | None] = mapped_column(String(500))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     table: Mapped[DiningTable] = relationship(foreign_keys=[table_id], lazy="joined")
@@ -172,12 +162,10 @@ class CustomerToken(Base):
 class ServiceRequest(Base):
     __tablename__ = "service_requests"
     __table_args__ = (
-        # Um chamado ativo por tipo e sessão (pedidos geram um chamado por pedido).
+        # Um chamado pendente por tipo e sessão (pedidos geram uma solicitação por pedido).
         Index("uq_active_request_per_type", "session_id", "type", unique=True,
-              postgresql_where=text(
-                  "status IN ('PENDENTE','ASSUMIDA','EM_ATENDIMENTO') AND type <> 'NOVO_PEDIDO'")),
+              postgresql_where=text("status = 'PENDENTE' AND type <> 'NOVO_PEDIDO'")),
         Index("ix_service_requests_est_status_created", "establishment_id", "status", "created_at"),
-        CheckConstraint("priority BETWEEN 0 AND 3", name="priority_range"),
     )
     id: Mapped[uuid.UUID] = _uuid_pk()
     establishment_id: Mapped[uuid.UUID] = _est_fk()
@@ -187,20 +175,18 @@ class ServiceRequest(Base):
     type: Mapped[RequestType] = mapped_column(_enum(RequestType, "request_type"), nullable=False)
     status: Mapped[RequestStatus] = mapped_column(_enum(RequestStatus, "request_status"), nullable=False,
                                                   default=RequestStatus.PENDENTE)
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     note: Mapped[str | None] = mapped_column(String(280))
     order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("orders.id", use_alter=True,
                                                                   name="fk_service_requests_order"))
-    origin: Mapped[str] = mapped_column(String(16), nullable=False, default="CLIENTE")
-    assigned_to_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = _updated()
-    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     table: Mapped[DiningTable] = relationship(lazy="joined")
-    assigned_to: Mapped[User | None] = relationship(lazy="joined")
+    completed_by: Mapped[User | None] = relationship(lazy="joined")
+    order: Mapped[Order | None] = relationship(lazy="joined")
 
 
 class Category(Base):
@@ -271,7 +257,7 @@ class ProductOption(Base):
 
 class Order(Base):
     __tablename__ = "orders"
-    __table_args__ = (Index("ix_orders_est_status_created", "establishment_id", "status", "created_at"),
+    __table_args__ = (Index("ix_orders_est_created", "establishment_id", "created_at"),
                       CheckConstraint("total_cents >= 0", name="total_non_negative"))
     id: Mapped[uuid.UUID] = _uuid_pk()
     establishment_id: Mapped[uuid.UUID] = _est_fk()
@@ -280,14 +266,9 @@ class Order(Base):
     table_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tables.id"), nullable=False)
     number: Mapped[int] = mapped_column(BigInteger, nullable=False,
                                         server_default=text("nextval('order_number_seq')"))
-    status: Mapped[OrderStatus] = mapped_column(_enum(OrderStatus, "order_status"), nullable=False,
-                                                default=OrderStatus.RECEBIDO)
-    origin: Mapped[str] = mapped_column(String(16), nullable=False, default="CLIENTE")
     note: Mapped[str | None] = mapped_column(String(280))
     total_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = _created()
-    updated_at: Mapped[datetime] = _updated()
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     items: Mapped[list[OrderItem]] = relationship(back_populates="order", lazy="selectin",
                                                   cascade="all, delete-orphan")
@@ -308,17 +289,6 @@ class OrderItem(Base):
     line_total_cents: Mapped[int] = mapped_column(Integer, nullable=False)
 
     order: Mapped[Order] = relationship(back_populates="items")
-
-
-class OrderStatusHistory(Base):
-    __tablename__ = "order_status_history"
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
-    from_status: Mapped[str | None] = mapped_column(String(32))
-    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
-    changed_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
-    reason: Mapped[str | None] = mapped_column(String(280))
-    created_at: Mapped[datetime] = _created()
 
 
 class OutboxEvent(Base):
@@ -360,54 +330,14 @@ class PushSubscription(Base):
     failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
-class PromotionKind(str, enum.Enum):
-    BANNER = "BANNER"
-    EVENTO = "EVENTO"
-    CAMPANHA = "CAMPANHA"
-
-
-class Promotion(Base):
-    __tablename__ = "promotions"
-    __table_args__ = (CheckConstraint("ends_at > starts_at", name="period_valid"),)
+class Notice(Base):
+    """Aviso aos clientes (promoção, evento, novidade). Para saber mais, o cliente chama um atendente."""
+    __tablename__ = "notices"
+    __table_args__ = (Index("ix_notices_est_active", "establishment_id", "active"),)
     id: Mapped[uuid.UUID] = _uuid_pk()
     establishment_id: Mapped[uuid.UUID] = _est_fk()
-    kind: Mapped[PromotionKind] = mapped_column(_enum(PromotionKind, "promotion_kind"), nullable=False)
     title: Mapped[str] = mapped_column(String(120), nullable=False)
-    description: Mapped[str | None] = mapped_column(String(1000))
-    image_url: Mapped[str | None] = mapped_column(String(500))
-    conditions: Mapped[str | None] = mapped_column(String(500))
-    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime] = _created()
-    updated_at: Mapped[datetime] = _updated()
-
-
-class DiscountType(str, enum.Enum):
-    PERCENT = "PERCENT"
-    FIXED = "FIXED"
-
-
-class Coupon(Base):
-    __tablename__ = "coupons"
-    __table_args__ = (
-        UniqueConstraint("establishment_id", "code", name="uq_coupons_est_code"),
-        CheckConstraint("ends_at > starts_at", name="period_valid"),
-        CheckConstraint("value > 0", name="value_positive"),
-        CheckConstraint("discount_type <> 'PERCENT' OR value <= 100", name="percent_max"),
-        CheckConstraint("max_uses IS NULL OR uses_count <= max_uses", name="uses_within_limit"),
-    )
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    establishment_id: Mapped[uuid.UUID] = _est_fk()
-    code: Mapped[str] = mapped_column(String(32), nullable=False)
-    description: Mapped[str | None] = mapped_column(String(280))
-    discount_type: Mapped[DiscountType] = mapped_column(_enum(DiscountType, "discount_type"), nullable=False)
-    value: Mapped[int] = mapped_column(Integer, nullable=False)  # % ou centavos
-    min_order_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    max_uses: Mapped[int | None] = mapped_column(Integer)
-    uses_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    message: Mapped[str | None] = mapped_column(String(500))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = _updated()
