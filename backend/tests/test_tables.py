@@ -82,20 +82,19 @@ def test_close_flow_and_token_revocation(world, client):
     table = world["caixa"].get("/api/v1/tables").json()[0]
     assert table["status"] == "ENCERRAMENTO_SOLICITADO"  # continua ocupada até o encerramento
     sid = table["session"]["id"]
-    r = world["caixa"].post(f"/api/v1/table-sessions/{sid}/close", json={"payment_method": "PIX"})
+    r = world["caixa"].post(f"/api/v1/table-sessions/{sid}/close", json={})
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "CLOSED"
     assert world["caixa"].get("/api/v1/tables").json()[0]["status"] == "LIVRE"
     # Página antiga aberta: qualquer ação falha.
     assert cust.get("/api/v1/public/session").status_code == 401
     assert cust.post("/api/v1/public/service-requests", json={"type": "CHAMAR_ATENDENTE"}).status_code == 401
-    assert cust.post("/api/v1/public/orders", json={"items": []}).status_code in (401, 422)
     # Fechar de novo não duplica.
-    assert world["caixa"].post(f"/api/v1/table-sessions/{sid}/close",
-                               json={"payment_method": "PIX"}).status_code == 409
+    assert world["caixa"].post(f"/api/v1/table-sessions/{sid}/close", json={}).status_code == 409
     # Histórico.
     hist = world["caixa"].get("/api/v1/table-sessions").json()
-    assert hist["total"] == 1 and hist["items"][0]["payment_method"] == "PIX"
+    assert hist["total"] == 1 and hist["items"][0]["closed_by_name"].startswith("Caixa")
+    assert "total_cents" not in hist["items"][0] and "payment_method" not in hist["items"][0]
 
 
 def test_old_token_cannot_reach_new_session(world, client):
@@ -103,7 +102,7 @@ def test_old_token_cannot_reach_new_session(world, client):
     open_table(world["atendente"], tid)
     old = Customer(client, code)
     sid = world["caixa"].get("/api/v1/tables").json()[0]["session"]["id"]
-    world["caixa"].post(f"/api/v1/table-sessions/{sid}/close", json={"payment_method": "DINHEIRO"})
+    world["caixa"].post(f"/api/v1/table-sessions/{sid}/close", json={})
     open_table(world["atendente"], tid, label="Outra família")
     new = Customer(client, code)
     assert old.get("/api/v1/public/session").status_code == 401

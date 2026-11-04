@@ -3,10 +3,10 @@ import { api, ApiError, errorMessage, setUnauthorizedHandler } from "../../api/h
 import type { Me } from "../../api/types";
 import { ConnectionBadge, Field, useToast } from "../../components/ui";
 import { Link, navigate } from "../../lib/router";
-import { AdminAudit, AdminMenu, AdminPromotions, AdminPush, AdminSettings, AdminTables, AdminUsers } from "../admin/Admin";
+import { AdminAudit, AdminSettings, AdminTables, AdminUsers } from "../admin/Admin";
+import { AdminFloor } from "../admin/FloorEditor";
 import { CashPanel, History } from "./Cash";
 import { OpsBoard } from "./OpsBoard";
-import { OrdersBoard } from "./OrdersBoard";
 import { StaffDataProvider, useStaff } from "./StaffData";
 
 export function StaffApp({ path }: { path: string }) {
@@ -87,14 +87,11 @@ function Login({ onLogin, already }: { onLogin: (m: Me) => void; already: Me | n
 
 const NAV: { to: string; label: string; perm: string }[] = [
   { to: "/painel", label: "Salão", perm: "tables.view" },
-  { to: "/pedidos", label: "Pedidos", perm: "orders.view" },
   { to: "/caixa", label: "Caixa", perm: "cash.view" },
   { to: "/historico", label: "Histórico", perm: "history.view" },
-  { to: "/admin/cardapio", label: "Cardápio", perm: "menu.manage" },
   { to: "/admin/mesas", label: "Mesas", perm: "tables.manage" },
+  { to: "/admin/planta", label: "Planta", perm: "layouts.manage" },
   { to: "/admin/usuarios", label: "Equipe", perm: "users.manage" },
-  { to: "/admin/promocoes", label: "Promoções", perm: "promotions.manage" },
-  { to: "/admin/notificacoes", label: "Notificações", perm: "push.send" },
   { to: "/admin/auditoria", label: "Auditoria", perm: "audit.view" },
   { to: "/admin/configuracoes", label: "Configurações", perm: "settings.manage" },
 ];
@@ -145,14 +142,11 @@ function Layout({ path, onLogout }: { path: string; onLogout: () => void }) {
       </nav>
       <main className="s-main">
         {path.startsWith("/painel") && <OpsBoard />}
-        {path.startsWith("/pedidos") && <OrdersBoard />}
         {path.startsWith("/caixa") && <CashPanel />}
         {path.startsWith("/historico") && <History />}
-        {path.startsWith("/admin/cardapio") && <AdminMenu />}
         {path.startsWith("/admin/mesas") && <AdminTables />}
+        {path.startsWith("/admin/planta") && <AdminFloor />}
         {path.startsWith("/admin/usuarios") && <AdminUsers />}
-        {path.startsWith("/admin/promocoes") && <AdminPromotions />}
-        {path.startsWith("/admin/notificacoes") && <AdminPush />}
         {path.startsWith("/admin/auditoria") && <AdminAudit />}
         {path.startsWith("/admin/configuracoes") && <AdminSettings />}
         {path === "/conta" && <MyAccount />}

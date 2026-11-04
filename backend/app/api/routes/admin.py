@@ -12,24 +12,16 @@ from app.core.errors import AppError, conflict, not_found
 from app.core.permissions import Perm, Role
 from app.core.security import hash_secret
 from app.db.session import get_db
-from app.models import AuditLog, Establishment, PushSubscription, StaffSession, User
+from app.models import AuditLog, Establishment, StaffSession, User
 from app.schemas import (
     AuditOut,
-    CouponIn,
-    CouponOut,
     EstablishmentOut,
     EstablishmentPatch,
     Page,
-    PromotionIn,
-    PromotionOut,
-    PushBroadcastIn,
-    PushBroadcastOut,
     UserCreate,
     UserOut,
     UserPatch,
 )
-from app.services import promotions as promo_svc
-from app.services import push as push_svc
 from app.services.audit import audit
 from app.services.events import STAFF, emit
 from app.services.serializers import user_out
@@ -140,71 +132,3 @@ async def audit_logs(action: str | None = Query(default=None, max_length=64), li
                                 action=a.action, target_type=a.target_type, target_id=a.target_id, details=a.details,
                                 created_at=a.created_at) for a in rows],
                 total=int(total), limit=limit, offset=offset)
-
-
-# ---------- promoções / cupons ----------
-@router.get("/promotions", response_model=list[PromotionOut])
-async def list_promotions(ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                          db: AsyncSession = Depends(get_db)) -> list[PromotionOut]:
-    return await promo_svc.list_promotions(db, ctx.establishment_id)
-
-
-@router.post("/promotions", response_model=PromotionOut, status_code=201)
-async def create_promotion(data: PromotionIn, ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                           db: AsyncSession = Depends(get_db)) -> PromotionOut:
-    out = await promo_svc.save_promotion(db, ctx, data)
-    await db.commit()
-    return out
-
-
-@router.put("/promotions/{promo_id}", response_model=PromotionOut)
-async def update_promotion(promo_id: uuid.UUID, data: PromotionIn,
-                           ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                           db: AsyncSession = Depends(get_db)) -> PromotionOut:
-    out = await promo_svc.save_promotion(db, ctx, data, promo_id)
-    await db.commit()
-    return out
-
-
-@router.get("/coupons", response_model=list[CouponOut])
-async def list_coupons(ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                       db: AsyncSession = Depends(get_db)) -> list[CouponOut]:
-    return await promo_svc.list_coupons(db, ctx.establishment_id)
-
-
-@router.post("/coupons", response_model=CouponOut, status_code=201)
-async def create_coupon(data: CouponIn, ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                        db: AsyncSession = Depends(get_db)) -> CouponOut:
-    out = await promo_svc.save_coupon(db, ctx, data)
-    await db.commit()
-    return out
-
-
-@router.put("/coupons/{coupon_id}", response_model=CouponOut)
-async def update_coupon(coupon_id: uuid.UUID, data: CouponIn, ctx: StaffCtx = Depends(require(Perm.PROMOTIONS_MANAGE)),
-                        db: AsyncSession = Depends(get_db)) -> CouponOut:
-    out = await promo_svc.save_coupon(db, ctx, data, coupon_id)
-    await db.commit()
-    return out
-
-
-# ---------- push ----------
-@router.get("/push/stats")
-async def push_stats(ctx: StaffCtx = Depends(require(Perm.PUSH_SEND)), db: AsyncSession = Depends(get_db)) -> dict:
-    from app.core.config import get_settings
-    n = (await db.execute(select(func.count()).where(
-        PushSubscription.establishment_id == ctx.establishment_id, PushSubscription.revoked_at.is_(None),
-        PushSubscription.consent_marketing.is_(True)))).scalar_one()
-    return {"enabled": get_settings().push_enabled, "subscribers": int(n)}
-
-
-@router.post("/push/broadcast", response_model=PushBroadcastOut)
-async def push_broadcast(data: PushBroadcastIn, ctx: StaffCtx = Depends(require(Perm.PUSH_SEND)),
-                         db: AsyncSession = Depends(get_db)) -> PushBroadcastOut:
-    from app.core.ratelimit import hit
-    await hit(f"broadcast:{ctx.establishment_id}", 5, 3600)
-    out = await push_svc.broadcast(db, ctx.establishment_id, data)
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="push.broadcast",
-          details={"title": data.title, **out.model_dump()})
-    await db.commit()
-    return out

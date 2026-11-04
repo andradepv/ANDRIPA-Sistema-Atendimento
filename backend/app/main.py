@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.api.routes import admin, auth, health, menu, operations, public, tables, ws
+from app.api.routes import admin, auth, floor, health, operations, public, tables, ws
 from app.core.config import Settings, get_settings
 from app.core.errors import install_error_handlers
 from app.core.logging import request_id_var, setup_logging
@@ -142,7 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.relay = None
     install_error_handlers(app)
 
-    for r in (auth.router, tables.router, operations.router, menu.router, public.router, admin.router,
+    for r in (auth.router, tables.router, operations.router, public.router, admin.router, floor.router,
               health.router, ws.router):
         app.include_router(r, prefix=API)
 

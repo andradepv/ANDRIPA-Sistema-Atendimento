@@ -13,10 +13,9 @@ stateDiagram-v2
     OCUPADA --> LIVRE: encerrar (caixa/admin)
     ENCERRAMENTO_SOLICITADO --> LIVRE: encerrar (caixa/admin)
 ```
-Encerrar exige: sessão aberta, versão esperada (se enviada) igual à atual e **nenhum pedido pendente**
-(`RECEBIDO`, `EM_PREPARO`, `PRONTO`) — ou a política explícita `cancel_pending` com motivo. No mesmo COMMIT:
-pedidos pendentes cancelados (se for o caso), cupom resgatado, totais gravados, tokens do cliente revogados,
-chamados ativos finalizados, mesa `LIVRE`, eventos no outbox.
+Encerrar exige: sessão aberta e versão esperada (se enviada) igual à atual. No mesmo COMMIT: tokens do
+cliente revogados, chamados ativos finalizados (o pedido de conta vira `CONCLUIDA`, os demais `CANCELADA`),
+mesa `LIVRE` e eventos gravados no outbox.
 
 ## Sessão da mesa
 `OPEN → CLOSED`. No máximo uma `OPEN` por mesa (índice único parcial `uq_open_session_per_table`).
@@ -26,7 +25,7 @@ chamados ativos finalizados, mesa `LIVRE`, eventos no outbox.
 stateDiagram-v2
     [*] --> PENDENTE
     PENDENTE --> ASSUMIDA: assumir (exclusivo, UPDATE condicional)
-    PENDENTE --> EM_ATENDIMENTO: pedido entrou em preparo
+    PENDENTE --> EM_ATENDIMENTO: iniciar sem assumir antes
     PENDENTE --> CONCLUIDA
     PENDENTE --> CANCELADA: cliente cancela / encerramento
     ASSUMIDA --> EM_ATENDIMENTO: iniciar
@@ -35,23 +34,17 @@ stateDiagram-v2
     EM_ATENDIMENTO --> CONCLUIDA
     EM_ATENDIMENTO --> CANCELADA
 ```
-- Tipos: `CHAMAR_ATENDENTE`, `NOVO_PEDIDO` (um por pedido, acompanha o pedido), `PEDIR_CONTA`.
-- Um chamado **ativo** por tipo e sessão (exceto `NOVO_PEDIDO`): repetir o toque devolve o mesmo chamado.
+- Tipos: `CHAMAR_ATENDENTE` e `PEDIR_CONTA`.
+- Um chamado **ativo** por tipo e sessão: repetir o toque devolve o mesmo chamado.
   Depois de concluído, um novo chamado legítimo é aceito.
 - `PEDIR_CONTA` é concluído pelo caixa ao encerrar a mesa.
 
-## Pedido
-```mermaid
-stateDiagram-v2
-    [*] --> RECEBIDO
-    RECEBIDO --> EM_PREPARO
-    RECEBIDO --> PRONTO
-    RECEBIDO --> ENTREGUE
-    EM_PREPARO --> PRONTO
-    EM_PREPARO --> ENTREGUE
-    PRONTO --> ENTREGUE
-    RECEBIDO --> CANCELADO: caixa/admin, motivo
-    EM_PREPARO --> CANCELADO: caixa/admin, motivo
-    PRONTO --> CANCELADO: caixa/admin, motivo
+## Etiqueta NFC (`table_tags`)
 ```
-Toda mudança grava `order_status_history` (de, para, quem, motivo, quando).
+PENDENTE → GRAVANDO → GRAVADA → TRAVADA
+   ↓          ↓          ↓
+ FALHA ←──────┴──────────┘   FALHA → GRAVANDO (tentar de novo)
+ qualquer estado não final → SUBSTITUIDA (nova gravação ou troca de etiqueta)
+```
+Tabela em `backend/app/domain/states.py` (`TAG_TRANSITIONS`). Uma etiqueta "viva" por mesa e um mesmo chip (UID)
+em no máximo uma mesa: índices únicos parciais no banco.

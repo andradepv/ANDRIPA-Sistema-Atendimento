@@ -2,8 +2,8 @@ from conftest import Customer, open_table, pg
 
 
 def test_body_size_limit(client, world):
-    big = {"name": "x" * 70_000}
-    r = world["admin"].post("/api/v1/menu/categories", json=big)
+    big = {"number": 50, "name": "x" * 70_000}
+    r = world["admin"].post("/api/v1/tables", json=big)
     assert r.status_code == 413
 
 
@@ -16,10 +16,10 @@ def test_invalid_uuid_and_json(client, world):
 def test_sql_injection_strings_are_data(client, world):
     payload = "'; DROP TABLE tables; --"
     a = world["admin"]
-    r = a.post("/api/v1/menu/categories", json={"name": payload})
+    r = a.post("/api/v1/tables", json={"number": 50, "name": payload})
     assert r.status_code == 201 and r.json()["name"] == payload
     with pg() as c:
-        assert c.execute("SELECT count(*) FROM tables").fetchone()[0] == 3
+        assert c.execute("SELECT count(*) FROM tables").fetchone()[0] == 4
 
 
 def test_security_headers(client, world):

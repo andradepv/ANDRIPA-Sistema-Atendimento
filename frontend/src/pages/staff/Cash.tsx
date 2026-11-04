@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, errorMessage, newIdempotencyKey } from "../../api/http";
-import type { Page, PaymentMethod, SessionDetail, SessionHistory, Table } from "../../api/types";
-import { Dialog, Empty, Field, useNow, useToast } from "../../components/ui";
-import { clock, dateTime, elapsed, money, orderStatusLabel, paymentLabel, tableStatusLabel } from "../../lib/format";
+import type { Page, SessionDetail, SessionHistory, Table } from "../../api/types";
+import { Dialog, Empty, useNow, useToast } from "../../components/ui";
+import { clock, dateTime, elapsed, requestStatusLabel, requestTypeLabel, tableStatusLabel } from "../../lib/format";
+import { Field } from "../../components/ui";
 import { useStaff } from "./StaffData";
 
+/** Caixa: mesas abertas, quem pediu a conta e o encerramento (que libera a mesa e revoga o acesso do cliente). */
 export function CashPanel() {
   const { tables } = useStaff();
   const now = useNow();
@@ -43,14 +45,14 @@ export function CashPanel() {
         )}
       </section>
       <section className="cash__detail" aria-live="polite">
-        {selected ? <SessionPanel table={selected} onClosed={() => setSelectedId(null)} /> : <Empty>Escolha uma mesa para ver a comanda.</Empty>}
+        {selected ? <SessionPanel table={selected} onClosed={() => setSelectedId(null)} /> : <Empty>Escolha uma mesa para ver os chamados e encerrar o atendimento.</Empty>}
       </section>
     </div>
   );
 }
 
 function SessionPanel({ table, onClosed }: { table: Table; onClosed: () => void }) {
-  const { me, orders, requests } = useStaff();
+  const { me, requests, can } = useStaff();
   const toast = useToast();
   const [d, setD] = useState<SessionDetail | null>(null);
   const [closing, setClosing] = useState(false);
@@ -65,70 +67,49 @@ function SessionPanel({ table, onClosed }: { table: Table; onClosed: () => void 
     }
   }, [sid, toast]);
 
-  // Recarrega quando pedidos/chamados desta mesa mudam em tempo real.
-  const sig = orders.filter((o) => o.session_id === sid).map((o) => o.id + o.version).join() +
-    requests.filter((r) => r.session_id === sid).map((r) => r.id + r.version).join() + table.version;
+  // Recarrega quando os chamados desta mesa mudam em tempo real.
+  const sig = requests.filter((r) => r.session_id === sid).map((r) => r.id + r.version).join() + table.version;
   useEffect(() => {
     void load();
   }, [load, sig]);
 
-  if (!d) return <p className="empty">Carregando comanda…</p>;
+  if (!d) return <p className="empty">Carregando mesa…</p>;
   return (
     <div className="stack">
       <h2 className="s-h1">
-        Comanda — mesa {d.table_number} {d.label && <span className="muted">({d.label})</span>}
+        Mesa {d.table_number} {d.label && <span className="muted">({d.label})</span>}
       </h2>
       <p className="muted">
         Aberta às {clock(d.opened_at, tz)} por {d.opened_by_name}
         {d.close_requested_at && ` · conta pedida às ${clock(d.close_requested_at, tz)}`}
       </p>
-      {d.orders.length === 0 ? <Empty>Sem pedidos registrados pelo sistema nesta mesa.</Empty> : (
+      {d.requests.length === 0 ? <Empty>Nenhum chamado nesta mesa.</Empty> : (
         <table className="bill-table">
           <thead>
             <tr>
-              <th scope="col">Pedido</th>
-              <th scope="col">Itens</th>
+              <th scope="col">Chamado</th>
+              <th scope="col">Hora</th>
               <th scope="col">Situação</th>
-              <th scope="col" className="num">Valor</th>
+              <th scope="col">Responsável</th>
             </tr>
           </thead>
           <tbody>
-            {d.orders.map((o) => (
-              <tr key={o.id} className={o.status === "CANCELADO" ? "is-cancelled" : ""}>
-                <td>
-                  nº {o.number}
-                  <br />
-                  <span className="muted small">{clock(o.created_at, tz)}</span>
-                </td>
-                <td>
-                  {o.items.map((i) => (
-                    <div key={i.id}>
-                      {i.quantity}× {i.product_name}
-                      {i.options.length > 0 && <span className="muted"> + {i.options.map((x) => x.name).join(", ")}</span>}
-                    </div>
-                  ))}
-                </td>
-                <td>{orderStatusLabel[o.status]}</td>
-                <td className="num">{money(o.total_cents)}</td>
+            {d.requests.map((r) => (
+              <tr key={r.id}>
+                <td>{requestTypeLabel[r.type]}</td>
+                <td>{clock(r.created_at, tz)}</td>
+                <td>{requestStatusLabel[r.status]}</td>
+                <td>{r.assigned_to_name ?? "—"}</td>
               </tr>
             ))}
           </tbody>
-          <tfoot>
-            <tr>
-              <th scope="row" colSpan={3}>Subtotal</th>
-              <td className="num"><strong>{money(d.subtotal_cents)}</strong></td>
-            </tr>
-          </tfoot>
         </table>
       )}
-      {d.pending_orders > 0 && (
-        <p className="warn-box" role="note">
-          {d.pending_orders} pedido(s) ainda não entregue(s). Entregue ou cancele antes de fechar, ou informe o motivo para cancelá-los no fechamento.
-        </p>
+      {can("tables.close") && (
+        <button className="btn btn--primary" onClick={() => setClosing(true)}>
+          Encerrar atendimento e liberar mesa
+        </button>
       )}
-      <button className="btn btn--primary" onClick={() => setClosing(true)}>
-        Fechar conta e liberar mesa
-      </button>
       <CloseDialog
         detail={d}
         open={closing}
@@ -147,28 +128,16 @@ function SessionPanel({ table, onClosed }: { table: Table; onClosed: () => void 
 function CloseDialog(props: { detail: SessionDetail; open: boolean; onClose: () => void; onDone: () => void; onStale: () => void }) {
   const d = props.detail;
   const toast = useToast();
-  const [method, setMethod] = useState<PaymentMethod>("PIX");
-  const [coupon, setCoupon] = useState("");
-  const [cancelPending, setCancelPending] = useState(false);
-  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [key, setKey] = useState<string | null>(null);
+  const active = d.requests.filter((r) => ["PENDENTE", "ASSUMIDA", "EM_ATENDIMENTO"].includes(r.status) && r.type !== "PEDIR_CONTA").length;
 
   const submit = async () => {
     setBusy(true);
     const k = key ?? newIdempotencyKey("close");
     setKey(k);
     try {
-      await api(`/table-sessions/${d.id}/close`, {
-        idempotencyKey: k,
-        body: {
-          payment_method: method,
-          coupon_code: coupon || null,
-          pending_orders_policy: cancelPending ? "cancel_pending" : "block",
-          note: note || null,
-          expected_version: d.version,
-        },
-      });
+      await api(`/table-sessions/${d.id}/close`, { idempotencyKey: k, body: { expected_version: d.version } });
       setKey(null);
       props.onDone();
     } catch (e) {
@@ -181,7 +150,7 @@ function CloseDialog(props: { detail: SessionDetail; open: boolean; onClose: () 
   };
 
   return (
-    <Dialog open={props.open} title={`Fechar a mesa ${d.table_number}`} onClose={props.onClose}>
+    <Dialog open={props.open} title={`Encerrar a mesa ${d.table_number}`} onClose={props.onClose}>
       <form
         className="stack"
         onSubmit={(e) => {
@@ -189,41 +158,15 @@ function CloseDialog(props: { detail: SessionDetail; open: boolean; onClose: () 
           void submit();
         }}
       >
-        <p>
-          Subtotal <strong>{money(d.subtotal_cents)}</strong>. O total final, com cupom, é calculado pelo sistema.
-        </p>
-        <Field label="Forma de pagamento" hint="Apenas registro — o pagamento é feito na maquininha ou no caixa.">
-          <select value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-            {Object.entries(paymentLabel).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Cupom (opcional)">
-          <input value={coupon} onChange={(e) => setCoupon(e.target.value.toUpperCase())} maxLength={32} />
-        </Field>
-        {d.pending_orders > 0 && (
-          <>
-            <label className="opt">
-              <input type="checkbox" checked={cancelPending} onChange={(e) => setCancelPending(e.target.checked)} />
-              <span>Cancelar os {d.pending_orders} pedido(s) não entregue(s)</span>
-            </label>
-            {cancelPending && (
-              <Field label="Motivo do cancelamento">
-                <input value={note} onChange={(e) => setNote(e.target.value)} required maxLength={280} />
-              </Field>
-            )}
-          </>
-        )}
-        <p className="muted small">Ao fechar, o celular dos clientes desta mesa perde o acesso imediatamente.</p>
+        <p>A mesa volta a ficar livre e o QR Code e a etiqueta NFC deixam de funcionar até a próxima abertura.</p>
+        {active > 0 && <p className="warn-box" role="note">{active} chamado(s) ainda aberto(s) serão cancelados.</p>}
+        <p className="muted small">Ao encerrar, o celular dos clientes desta mesa perde o acesso imediatamente.</p>
         <div className="dialog__actions">
           <button type="button" className="btn btn--ghost" onClick={props.onClose}>
             Voltar
           </button>
-          <button className="btn btn--primary" disabled={busy || (d.pending_orders > 0 && !cancelPending)}>
-            {busy ? "Fechando…" : "Fechar conta"}
+          <button className="btn btn--primary" disabled={busy}>
+            {busy ? "Encerrando…" : "Encerrar atendimento"}
           </button>
         </div>
       </form>
@@ -262,9 +205,7 @@ export function History() {
                 <th scope="col">Mesa</th>
                 <th scope="col">Aberta</th>
                 <th scope="col">Encerrada</th>
-                <th scope="col">Por</th>
-                <th scope="col">Pagamento</th>
-                <th scope="col" className="num">Total</th>
+                <th scope="col">Encerrada por</th>
               </tr>
             </thead>
             <tbody>
@@ -278,8 +219,6 @@ export function History() {
                   <td>{dateTime(s.opened_at, tz)}</td>
                   <td>{s.closed_at ? dateTime(s.closed_at, tz) : "—"}</td>
                   <td>{s.closed_by_name ?? "—"}</td>
-                  <td>{s.payment_method ? paymentLabel[s.payment_method] : "—"}</td>
-                  <td className="num">{s.total_cents != null ? money(s.total_cents) : "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -300,16 +239,16 @@ export function History() {
       <Dialog open={!!detail} title={detail ? `Mesa ${detail.table_number} — ${detail.closed_at ? dateTime(detail.closed_at, tz) : ""}` : ""} onClose={() => setDetail(null)} wide>
         {detail && (
           <div className="stack">
-            <p>
-              Subtotal {money(detail.subtotal_cents)} · desconto {money(detail.discount_cents)} · <strong>total {money(detail.total_cents)}</strong>
-            </p>
-            <ul className="stack">
-              {detail.orders.map((o) => (
-                <li key={o.id}>
-                  nº {o.number} ({orderStatusLabel[o.status]}): {o.items.map((i) => `${i.quantity}× ${i.product_name}`).join(", ")} — {money(o.total_cents)}
-                </li>
-              ))}
-            </ul>
+            {detail.requests.length === 0 ? <p className="muted">Nenhum chamado nesta sessão.</p> : (
+              <ul className="stack">
+                {detail.requests.map((r) => (
+                  <li key={r.id}>
+                    {clock(r.created_at, tz)} — {requestTypeLabel[r.type]} ({requestStatusLabel[r.status]})
+                    {r.assigned_to_name && ` · ${r.assigned_to_name}`}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </Dialog>

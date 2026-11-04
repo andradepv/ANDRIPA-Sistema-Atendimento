@@ -52,9 +52,8 @@ def _migrate() -> None:
                    env={**os.environ})
 
 
-TABLES = ("audit_logs, order_status_history, order_items, service_requests, orders, customer_tokens, "
-          "idempotency_keys, outbox_events, push_subscriptions, coupons, promotions, product_options, "
-          "option_groups, products, categories, staff_sessions, table_sessions, tables, users, establishments")
+TABLES = ("audit_logs, floor_layout_items, floor_layouts, table_tags, service_requests, customer_tokens, "
+          "idempotency_keys, outbox_events, staff_sessions, table_sessions, tables, users, establishments")
 
 
 @pytest.fixture(autouse=True)
@@ -94,8 +93,8 @@ def pg():
 def make_est(name: str = "Bar Teste", join_code_required: bool = False) -> uuid.UUID:
     eid = uuid.uuid4()
     with pg() as c:
-        c.execute("INSERT INTO establishments (id, name, timezone, join_code_required, orders_enabled) "
-                  "VALUES (%s, %s, 'America/Manaus', %s, true)", (eid, name, join_code_required))
+        c.execute("INSERT INTO establishments (id, name, timezone, join_code_required) "
+                  "VALUES (%s, %s, 'America/Manaus', %s)", (eid, name, join_code_required))
     return eid
 
 
@@ -143,6 +142,9 @@ class Actor:
     def put(self, url: str, json=None, **kw):  # noqa: A002
         return self.client.put(url, json=json, headers=self.headers(kw.pop("headers", None)), **kw)
 
+    def delete(self, url: str, **kw):
+        return self.client.delete(url, headers=self.headers(kw.pop("headers", None)), **kw)
+
 
 class Customer:
     def __init__(self, client: TestClient, code: str, join_code: str | None = None) -> None:
@@ -181,16 +183,3 @@ def world(client):
 def open_table(actor: Actor, table_id: str, pin: str = "3333", label: str = "Família Silva", key: str | None = None):
     headers = {"idempotency-key": key} if key else None
     return actor.post(f"/api/v1/tables/{table_id}/open", json={"label": label, "confirm_secret": pin}, headers=headers)
-
-
-@pytest.fixture
-def menu(world):
-    a = world["admin"]
-    cat = a.post("/api/v1/menu/categories", json={"name": "Lanches"}).json()
-    burger = a.post("/api/v1/menu/products", json={
-        "category_id": cat["id"], "name": "X-Burguer", "price_cents": 2500,
-        "option_groups": [{"name": "Adicionais", "min_select": 0, "max_select": 2,
-                           "options": [{"name": "Bacon", "price_cents": 500}, {"name": "Ovo", "price_cents": 300}]}],
-    }).json()
-    agua = a.post("/api/v1/menu/products", json={"category_id": cat["id"], "name": "Água", "price_cents": 500}).json()
-    return {"category": cat, "burger": burger, "agua": agua}

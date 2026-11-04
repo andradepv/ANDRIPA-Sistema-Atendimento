@@ -1,4 +1,4 @@
-# Guia operacional — atendentes e caixa
+# Guia operacional — atendentes, caixa e administrador
 
 ## Antes do turno
 1. Abra o painel no celular, tablet ou computador e entre com **seu** e-mail e senha.
@@ -21,20 +21,15 @@
 - Toque em **Assumir** — só uma pessoa consegue assumir; se outro colega foi mais rápido, aparece o nome dele.
 - Depois **Iniciar atendimento** e **Concluir**.
 
-**Pedidos** — na aba *Pedidos*, cada coluna é uma etapa: *Recebido → Em preparo → Pronto*. Use os botões
-para avançar; ao marcar **Entregue na mesa** o pedido sai da tela e o cliente vê a atualização no celular.
-
 **Cliente pediu a conta para você em voz alta?** Toque na mesa → **Registrar pedido de conta**.
 
 ## Caixa
 1. Aba **Caixa**: as mesas que pediram a conta aparecem primeiro.
-2. Toque na mesa para ver a comanda (pedidos, situação e subtotal calculado pelo sistema).
-3. Se houver pedido ainda não entregue, entregue-o (aba Pedidos) ou, se o cliente desistiu, marque
-   **Cancelar os pedidos não entregues** e informe o motivo.
-4. **Fechar conta e liberar mesa**: escolha a forma de pagamento (só registro) e, se houver, o cupom.
-5. Ao fechar, o celular do cliente perde o acesso na hora e a mesa volta a **Livre**.
+2. Toque na mesa para ver quem abriu, a hora, a identificação e os chamados daquela mesa.
+3. **Encerrar atendimento e liberar mesa**: se houver chamado ainda aberto, ele será cancelado.
+4. Ao encerrar, o celular do cliente perde o acesso na hora e a mesa volta a **Livre**.
 
-O sistema **não cobra**: receba na maquininha/Pix como de costume e registre a forma usada.
+O sistema **não registra consumo nem pagamento**: a conta é cobrada no caixa/PDV do estabelecimento como de costume.
 
 ## Situações comuns
 | Situação | O que fazer |
@@ -42,7 +37,7 @@ O sistema **não cobra**: receba na maquininha/Pix como de costume e registre a 
 | “Mesa não está aberta para atendimento digital” no celular do cliente | Abra a mesa no painel; peça para ler o QR de novo |
 | Cliente trocou de mesa | Feche a conta da mesa antiga (ou peça ao caixa) e abra a nova |
 | Duas pessoas tentaram abrir a mesma mesa | Só uma abertura vale; a outra vê “a mesa já está aberta” |
-| Mensagem “A mesa mudou desde que você abriu a comanda” | Chegou pedido novo; revise a comanda e confirme de novo |
+| Mensagem “A mesa mudou desde que você abriu o painel” | Outro funcionário alterou a mesa; revise e confirme de novo |
 | Painel “Sem conexão” | Verifique o Wi-Fi; nada se perde — tudo está gravado no servidor |
 | Esqueceu o PIN | Use sua senha no lugar do PIN, ou peça ao administrador para redefinir |
 
@@ -53,7 +48,5 @@ uma ação do caixa.
 ## Administrador (resumo)
 - **Mesas**: cadastre, imprima o QR Code e use **Copiar para NFC** para gravar a mesma URL na etiqueta
   (qualquer app gravador de NFC, registro tipo URL). **Gerar novo endereço** invalida QR e etiqueta antigos.
-- **Cardápio**: categorias, produtos, adicionais; desmarque *Disponível* quando acabar um item.
 - **Equipe**: crie contas individuais; trocar o papel ou a senha desconecta a pessoa.
-- **Promoções/cupons**: só aparecem para o cliente dentro do período.
-- **Auditoria**: quem abriu/fechou mesas, cancelou pedidos, alterou cardápio e equipe.
+- **Auditoria**: quem abriu e encerrou mesas, tratou chamados, gravou etiquetas e alterou a equipe.

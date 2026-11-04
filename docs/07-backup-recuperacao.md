@@ -36,12 +36,9 @@ DELETE FROM outbox_events     WHERE published_at < now() - interval '7 days';
 DELETE FROM idempotency_keys  WHERE created_at   < now() - interval '1 day';
 DELETE FROM customer_tokens   WHERE revoked_at   < now() - interval '30 days';
 DELETE FROM staff_sessions    WHERE coalesce(revoked_at, expires_at) < now() - interval '30 days';
-DELETE FROM push_subscriptions WHERE revoked_at  < now() - interval '30 days';
 ```
-Pedidos, sessões e auditoria são histórico contábil e operacional: manter conforme a política fiscal do
-estabelecimento.
+Sessões, chamados e auditoria são histórico operacional: manter conforme a política do estabelecimento.
 
 ## LGPD
 O sistema não pede nome, telefone ou e-mail do cliente. Dados pessoais armazenados: contas da equipe,
-identificação opcional da mesa (texto livre — oriente a equipe a usar só o primeiro nome) e inscrições
-push (endpoint do navegador, com consentimento explícito e cancelamento a qualquer momento).
+identificação opcional da mesa (texto livre — oriente a equipe a usar só o primeiro nome).

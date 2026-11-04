@@ -46,8 +46,6 @@ async def main() -> None:
     endpoints = [
         ("GET /tables", "/api/v1/tables", staff),
         ("GET /service-requests", "/api/v1/service-requests?active=true", staff),
-        ("GET /orders", "/api/v1/orders?active=true", staff),
-        ("GET /public/menu", "/api/v1/public/menu", cust),
         ("GET /public/session", "/api/v1/public/session", cust),
     ]
     samples: dict[str, list[float]] = {name: [] for name, _, _ in endpoints}

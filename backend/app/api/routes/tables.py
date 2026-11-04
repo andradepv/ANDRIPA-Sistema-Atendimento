@@ -138,6 +138,5 @@ async def session_history(status: SessionStatus = SessionStatus.CLOSED, table_nu
     names = {u.id: u.name for u in (await db.execute(select(User).where(User.id.in_(closer_ids)))).scalars()} if closer_ids else {}
     items = [SessionHistoryOut(id=s.id, table_number=s.table.number, label=s.label, opened_at=s.opened_at,
                                closed_at=s.closed_at, opened_by_name=s.opened_by.name,
-                               closed_by_name=names.get(s.closed_by_id) if s.closed_by_id else None,
-                               total_cents=s.total_cents, payment_method=s.payment_method) for s in rows]
+                               closed_by_name=names.get(s.closed_by_id) if s.closed_by_id else None) for s in rows]
     return Page(items=items, total=int(total), limit=limit, offset=offset)

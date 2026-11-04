@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage, newIdempotencyKey } from "../../api/http";
 import type { ServiceRequest, Table } from "../../api/types";
 import { Dialog, Empty, Field, useNow, useToast } from "../../components/ui";
-import { clock, elapsed, money, requestStatusLabel, requestTypeLabel, tableStatusLabel } from "../../lib/format";
+import { clock, elapsed, requestStatusLabel, requestTypeLabel, tableStatusLabel } from "../../lib/format";
 import { navigate } from "../../lib/router";
 import { useStaff } from "./StaffData";
 
@@ -14,9 +14,90 @@ export function sortRequests(list: ServiceRequest[]): ServiceRequest[] {
   );
 }
 
+function TableTile({ t, onClick }: { t: Table; onClick: (t: Table) => void }) {
+  return (
+    <button className={`table-tile tt-${t.status}`} onClick={() => onClick(t)}>
+      <span className="table-tile__num">{t.number}</span>
+      <span className="table-tile__status">{tableStatusLabel[t.status]}</span>
+      {t.session?.label && <span className="table-tile__label">{t.session.label}</span>}
+      {t.pending_requests > 0 && (
+        <span className="table-tile__alerts">{`${t.pending_requests} chamado${t.pending_requests > 1 ? "s" : ""}`}</span>
+      )}
+    </button>
+  );
+}
+
+/** Mesas na posição que ocupam no salão (planta ativa); mesas sem posição vêm logo abaixo. */
+function FloorPlan({ tables, onSelect }: { tables: Table[]; onSelect: (t: Table) => void }) {
+  const { layout } = useStaff();
+  const placed = useMemo(() => {
+    const pos = new Map((layout?.items ?? []).map((i) => [i.table_id, i]));
+    return tables.flatMap((t) => (pos.has(t.id) ? [{ t, x: pos.get(t.id)!.x, y: pos.get(t.id)!.y }] : []));
+  }, [tables, layout]);
+  const loose = tables.filter((t) => !placed.some((p) => p.t.id === t.id));
+  if (placed.length === 0) return <TableList tables={tables} onSelect={onSelect} />;
+  const minX = Math.min(...placed.map((p) => p.x));
+  const minY = Math.min(...placed.map((p) => p.y));
+  const maxX = Math.max(...placed.map((p) => p.x));
+  const maxY = Math.max(...placed.map((p) => p.y));
+  return (
+    <>
+      <p className="muted small">Planta: {layout?.name}</p>
+      <div className="plan-scroll">
+        <div
+          className="plan"
+          style={{ gridTemplateColumns: `repeat(${maxX - minX + 1}, minmax(104px, 1fr))`, gridTemplateRows: `repeat(${maxY - minY + 1}, auto)` }}
+        >
+          {placed.map(({ t, x, y }) => (
+            <div key={t.id} style={{ gridColumn: x - minX + 1, gridRow: y - minY + 1 }}>
+              <TableTile t={t} onClick={onSelect} />
+            </div>
+          ))}
+        </div>
+      </div>
+      {loose.length > 0 && (
+        <>
+          <h2 className="s-h2">Sem posição na planta</h2>
+          <TableList tables={loose} onSelect={onSelect} />
+        </>
+      )}
+    </>
+  );
+}
+
+function TableList({ tables, onSelect }: { tables: Table[]; onSelect: (t: Table) => void }) {
+  return (
+    <ul className="tables">
+      {tables.map((t) => (
+        <li key={t.id}>
+          <TableTile t={t} onClick={onSelect} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const VIEW_KEY = "andripa.salao.view";
+
 export function OpsBoard() {
-  const { tables, requests } = useStaff();
+  const { tables, requests, layout } = useStaff();
   const [selected, setSelected] = useState<Table | null>(null);
+  const [view, setView] = useState<"planta" | "lista">("planta");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(VIEW_KEY) === "lista") setView("lista");
+    } catch {
+      /* sem armazenamento: mantém a planta */
+    }
+  }, []);
+  const choose = (v: "planta" | "lista") => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* ignora */
+    }
+  };
   const current = selected ? tables.find((t) => t.id === selected.id) ?? selected : null;
   return (
     <div className="ops">
@@ -33,26 +114,25 @@ export function OpsBoard() {
         )}
       </section>
       <section className="ops__tables" aria-labelledby="t-h">
-        <h1 id="t-h" className="s-h1">Mesas</h1>
-        {tables.length === 0 ? <Empty>Nenhuma mesa cadastrada. Um administrador cadastra as mesas em Mesas.</Empty> : (
-          <ul className="tables">
-            {tables.map((t) => (
-              <li key={t.id}>
-                <button className={`table-tile tt-${t.status}`} onClick={() => setSelected(t)}>
-                  <span className="table-tile__num">{t.number}</span>
-                  <span className="table-tile__status">{tableStatusLabel[t.status]}</span>
-                  {t.session?.label && <span className="table-tile__label">{t.session.label}</span>}
-                  {(t.pending_requests > 0 || t.pending_orders > 0) && (
-                    <span className="table-tile__alerts">
-                      {t.pending_requests > 0 && `${t.pending_requests} chamado${t.pending_requests > 1 ? "s" : ""}`}
-                      {t.pending_requests > 0 && t.pending_orders > 0 && " · "}
-                      {t.pending_orders > 0 && `${t.pending_orders} pedido${t.pending_orders > 1 ? "s" : ""}`}
-                    </span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
+        <div className="inline s-head">
+          <h1 id="t-h" className="s-h1">Mesas</h1>
+          {layout && layout.items.length > 0 && (
+            <div className="seg" role="group" aria-label="Forma de exibir as mesas">
+              <button className={view === "planta" ? "is-on" : ""} aria-pressed={view === "planta"} onClick={() => choose("planta")}>
+                Planta
+              </button>
+              <button className={view === "lista" ? "is-on" : ""} aria-pressed={view === "lista"} onClick={() => choose("lista")}>
+                Lista
+              </button>
+            </div>
+          )}
+        </div>
+        {tables.length === 0 ? (
+          <Empty>Nenhuma mesa cadastrada. Um administrador cadastra as mesas em Mesas.</Empty>
+        ) : view === "planta" ? (
+          <FloorPlan tables={tables} onSelect={setSelected} />
+        ) : (
+          <TableList tables={tables} onSelect={setSelected} />
         )}
       </section>
       <TableDialog table={current} onClose={() => setSelected(null)} />
@@ -107,11 +187,7 @@ function RequestCard({ r }: { r: ServiceRequest }) {
             Iniciar atendimento
           </button>
         )}
-        {r.type === "NOVO_PEDIDO" ? (
-          <button className="btn btn--ghost btn--small" onClick={() => navigate("/pedidos")}>
-            Ver pedido
-          </button>
-        ) : isBill ? (
+        {isBill ? (
           can("tables.close") && (
             <button className="btn btn--small" onClick={() => navigate(`/caixa?mesa=${r.table_number}`)}>
               Fechar conta
@@ -150,7 +226,7 @@ function elapsedClass(iso: string, now: number, status: string): string {
 }
 
 function TableDialog({ table, onClose }: { table: Table | null; onClose: () => void }) {
-  const { me, can, orders, requests } = useStaff();
+  const { me, can, requests } = useStaff();
   const toast = useToast();
   const [label, setLabel] = useState("");
   const [secret, setSecret] = useState("");
@@ -187,7 +263,6 @@ function TableDialog({ table, onClose }: { table: Table | null; onClose: () => v
     }
   };
 
-  const sOrders = table.session ? orders.filter((o) => o.session_id === table.session!.id) : [];
   const sReqs = table.session ? requests.filter((r) => r.session_id === table.session!.id) : [];
 
   return (
@@ -245,10 +320,7 @@ function TableDialog({ table, onClose }: { table: Table | null; onClose: () => v
               </div>
             )}
           </dl>
-          <p>
-            {sReqs.length} chamado(s) aberto(s) · {sOrders.length} pedido(s) em andamento ·{" "}
-            {money(sOrders.reduce((s, o) => s + o.total_cents, 0))} em preparo
-          </p>
+          <p>{sReqs.length} chamado(s) aberto(s) nesta mesa.</p>
           <div className="dialog__actions">
             {table.status === "OCUPADA" && can("tables.request_close") && (
               <button className="btn" onClick={() => void requestClose()}>
@@ -257,7 +329,7 @@ function TableDialog({ table, onClose }: { table: Table | null; onClose: () => v
             )}
             {can("cash.view") && (
               <button className="btn btn--primary" onClick={() => navigate(`/caixa?mesa=${table.number}`)}>
-                Abrir comanda no caixa
+                Ir para o caixa
               </button>
             )}
           </div>

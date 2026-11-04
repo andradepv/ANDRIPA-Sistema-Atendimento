@@ -2,10 +2,8 @@
 
 export type Role = "ADMIN" | "CAIXA" | "ATENDENTE";
 export type TableStatus = "LIVRE" | "OCUPADA" | "ENCERRAMENTO_SOLICITADO";
-export type RequestType = "CHAMAR_ATENDENTE" | "NOVO_PEDIDO" | "PEDIR_CONTA";
+export type RequestType = "CHAMAR_ATENDENTE" | "PEDIR_CONTA";
 export type RequestStatus = "PENDENTE" | "ASSUMIDA" | "EM_ATENDIMENTO" | "CONCLUIDA" | "CANCELADA";
-export type OrderStatus = "RECEBIDO" | "EM_PREPARO" | "PRONTO" | "ENTREGUE" | "CANCELADO";
-export type PaymentMethod = "DINHEIRO" | "CARTAO_CREDITO" | "CARTAO_DEBITO" | "PIX" | "OUTRO";
 
 export interface User {
   id: string;
@@ -21,7 +19,6 @@ export interface Establishment {
   name: string;
   timezone: string;
   join_code_required: boolean;
-  orders_enabled: boolean;
 }
 
 export interface Me {
@@ -40,6 +37,59 @@ export interface SessionBrief {
   close_requested_at: string | null;
 }
 
+export type TagStatus = "PENDENTE" | "GRAVANDO" | "GRAVADA" | "TRAVADA" | "FALHA" | "SUBSTITUIDA";
+
+export interface TagBrief {
+  id: string;
+  status: TagStatus;
+  uid: string | null;
+  error: string | null;
+  updated_at: string;
+}
+
+/** Etiqueta NFC de uma mesa, com tudo que o assistente de gravação precisa. */
+export interface Tag {
+  id: string;
+  table_id: string;
+  table_number: number;
+  table_name: string | null;
+  status: TagStatus;
+  url: string;
+  uid: string | null;
+  error: string | null;
+  started_by_name: string;
+  lock_authorized_at: string | null;
+  written_at: string | null;
+  locked_at: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+}
+
+export interface ProvisionOut {
+  table: Table;
+  tag: Tag;
+  qr_svg_url: string;
+}
+
+export interface LayoutItem {
+  table_id: string;
+  x: number;
+  y: number;
+}
+
+/** Planta (template) do salão. A grade tem `cols` × `rows` células. */
+export interface Layout {
+  id: string;
+  name: string;
+  is_active: boolean;
+  version: number;
+  cols: number;
+  rows: number;
+  items: LayoutItem[];
+  updated_at: string;
+}
+
 export interface Table {
   id: string;
   number: number;
@@ -50,7 +100,7 @@ export interface Table {
   version: number;
   session: SessionBrief | null;
   pending_requests: number;
-  pending_orders: number;
+  tag?: TagBrief | null;
 }
 
 export interface ServiceRequest {
@@ -63,7 +113,6 @@ export interface ServiceRequest {
   status: RequestStatus;
   priority: number;
   note: string | null;
-  order_id: string | null;
   origin: string;
   assigned_to_id: string | null;
   assigned_to_name: string | null;
@@ -72,74 +121,6 @@ export interface ServiceRequest {
   claimed_at: string | null;
   completed_at: string | null;
   version: number;
-}
-
-export interface OrderItem {
-  id: string;
-  product_id: string;
-  product_name: string;
-  unit_price_cents: number;
-  quantity: number;
-  options: { option_id: string; group: string; name: string; price_cents: number }[];
-  notes: string | null;
-  line_total_cents: number;
-}
-
-export interface Order {
-  id: string;
-  number: number;
-  session_id: string;
-  table_id: string;
-  table_number: number;
-  status: OrderStatus;
-  origin: string;
-  note: string | null;
-  total_cents: number;
-  created_at: string;
-  updated_at: string;
-  version: number;
-  items: OrderItem[];
-}
-
-export interface Option {
-  id: string;
-  name: string;
-  price_cents: number;
-  active: boolean;
-}
-
-export interface OptionGroup {
-  id: string;
-  name: string;
-  min_select: number;
-  max_select: number;
-  options: Option[];
-}
-
-export interface Product {
-  id: string;
-  category_id: string;
-  name: string;
-  description: string | null;
-  price_cents: number;
-  image_url: string | null;
-  available: boolean;
-  active: boolean;
-  position: number;
-  option_groups: OptionGroup[];
-}
-
-export interface Category {
-  id: string;
-  name: string;
-  position: number;
-  active: boolean;
-}
-
-export interface MenuCategory {
-  id: string;
-  name: string;
-  products: Product[];
 }
 
 export interface SessionDetail {
@@ -156,12 +137,6 @@ export interface SessionDetail {
   close_requested_at: string | null;
   closed_at: string | null;
   closed_by_name: string | null;
-  payment_method: string | null;
-  subtotal_cents: number;
-  discount_cents: number;
-  total_cents: number;
-  pending_orders: number;
-  orders: Order[];
   requests: ServiceRequest[];
   version: number;
 }
@@ -174,8 +149,6 @@ export interface SessionHistory {
   closed_at: string | null;
   opened_by_name: string;
   closed_by_name: string | null;
-  total_cents: number | null;
-  payment_method: string | null;
 }
 
 export interface Page<T> {
@@ -192,7 +165,6 @@ export interface PublicTable {
   table_name: string | null;
   available: boolean;
   join_code_required: boolean;
-  orders_enabled: boolean;
 }
 
 export interface CustomerSession {
@@ -202,50 +174,8 @@ export interface CustomerSession {
   table_number: number;
   table_name: string | null;
   table_status: TableStatus;
-  orders_enabled: boolean;
   opened_at: string;
   requests: ServiceRequest[];
-  orders: Order[];
-  total_cents: number;
-  push_public_key: string | null;
-}
-
-export type PromotionKind = "BANNER" | "EVENTO" | "CAMPANHA";
-
-export interface Promotion {
-  id: string;
-  kind: PromotionKind;
-  title: string;
-  description: string | null;
-  image_url: string | null;
-  conditions: string | null;
-  starts_at: string;
-  ends_at: string;
-  active: boolean;
-}
-
-export interface Coupon {
-  id: string;
-  code: string;
-  description: string | null;
-  discount_type: "PERCENT" | "FIXED";
-  value: number;
-  min_order_cents: number;
-  max_uses: number | null;
-  uses_count: number;
-  starts_at: string;
-  ends_at: string;
-  active: boolean;
-}
-
-export interface CouponValidation {
-  valid: boolean;
-  code: string;
-  description?: string | null;
-  discount_type?: "PERCENT" | "FIXED" | null;
-  value?: number | null;
-  estimated_discount_cents?: number | null;
-  reason?: string | null;
 }
 
 export interface AuditEntry {

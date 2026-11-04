@@ -1,7 +1,4 @@
-import type { OrderStatus, RequestStatus, RequestType, TableStatus } from "../api/types";
-
-const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
-export const money = (cents: number) => brl.format(cents / 100);
+import type { RequestStatus, RequestType, TableStatus, TagStatus } from "../api/types";
 
 /** Datas chegam em UTC e são exibidas no fuso do estabelecimento. */
 export function clock(iso: string, tz: string): string {
@@ -23,7 +20,6 @@ export function elapsed(iso: string, now: number): string {
 
 export const requestTypeLabel: Record<RequestType, string> = {
   CHAMAR_ATENDENTE: "Chamou o atendente",
-  NOVO_PEDIDO: "Novo pedido",
   PEDIR_CONTA: "Pediu a conta",
 };
 
@@ -35,24 +31,17 @@ export const requestStatusLabel: Record<RequestStatus, string> = {
   CANCELADA: "Cancelado",
 };
 
-export const orderStatusLabel: Record<OrderStatus, string> = {
-  RECEBIDO: "Recebido",
-  EM_PREPARO: "Em preparo",
-  PRONTO: "Pronto",
-  ENTREGUE: "Entregue",
-  CANCELADO: "Cancelado",
-};
-
 export const tableStatusLabel: Record<TableStatus, string> = {
   LIVRE: "Livre",
   OCUPADA: "Ocupada",
   ENCERRAMENTO_SOLICITADO: "Pediu a conta",
 };
 
-export const paymentLabel: Record<string, string> = {
-  DINHEIRO: "Dinheiro",
-  CARTAO_CREDITO: "Cartão de crédito",
-  CARTAO_DEBITO: "Cartão de débito",
-  PIX: "Pix",
-  OUTRO: "Outro",
+export const tagStatusLabel: Record<TagStatus, string> = {
+  PENDENTE: "Aguardando gravação",
+  GRAVANDO: "Gravando agora",
+  GRAVADA: "Gravada e conferida",
+  TRAVADA: "Gravada e travada",
+  FALHA: "Falhou",
+  SUBSTITUIDA: "Substituída",
 };

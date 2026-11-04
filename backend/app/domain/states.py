@@ -19,7 +19,6 @@ class SessionStatus(str, enum.Enum):
 
 class RequestType(str, enum.Enum):
     CHAMAR_ATENDENTE = "CHAMAR_ATENDENTE"
-    NOVO_PEDIDO = "NOVO_PEDIDO"
     PEDIR_CONTA = "PEDIR_CONTA"
 
 
@@ -34,16 +33,19 @@ class RequestStatus(str, enum.Enum):
 ACTIVE_REQUEST_STATUSES = (RequestStatus.PENDENTE, RequestStatus.ASSUMIDA, RequestStatus.EM_ATENDIMENTO)
 
 
-class OrderStatus(str, enum.Enum):
-    RECEBIDO = "RECEBIDO"
-    EM_PREPARO = "EM_PREPARO"
-    PRONTO = "PRONTO"
-    ENTREGUE = "ENTREGUE"
-    CANCELADO = "CANCELADO"
+class TagStatus(str, enum.Enum):
+    """Ciclo da etiqueta NFC de uma mesa. O servidor define a URL; ninguém a digita."""
+
+    PENDENTE = "PENDENTE"        # mesa criada, aguardando aproximar a etiqueta
+    GRAVANDO = "GRAVANDO"        # celular do administrador está gravando
+    GRAVADA = "GRAVADA"          # URL gravada e conferida na leitura; etiqueta ainda regravável
+    TRAVADA = "TRAVADA"          # bloqueada fisicamente (somente leitura, irreversível)
+    FALHA = "FALHA"              # gravação ou conferência falhou
+    SUBSTITUIDA = "SUBSTITUIDA"  # trocada por outra etiqueta ou nova gravação
 
 
-PENDING_ORDER_STATUSES = (OrderStatus.RECEBIDO, OrderStatus.EM_PREPARO, OrderStatus.PRONTO)
-
+LIVE_TAG_STATUSES = (TagStatus.PENDENTE, TagStatus.GRAVANDO, TagStatus.GRAVADA, TagStatus.TRAVADA)
+UID_TAG_STATUSES = (TagStatus.GRAVADA, TagStatus.TRAVADA)
 
 TABLE_TRANSITIONS: dict[TableStatus, set[TableStatus]] = {
     TableStatus.LIVRE: {TableStatus.OCUPADA},
@@ -62,15 +64,6 @@ REQUEST_TRANSITIONS: dict[RequestStatus, set[RequestStatus]] = {
     RequestStatus.CANCELADA: set(),
 }
 
-ORDER_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
-    OrderStatus.RECEBIDO: {OrderStatus.EM_PREPARO, OrderStatus.PRONTO, OrderStatus.ENTREGUE, OrderStatus.CANCELADO},
-    OrderStatus.EM_PREPARO: {OrderStatus.PRONTO, OrderStatus.ENTREGUE, OrderStatus.CANCELADO},
-    OrderStatus.PRONTO: {OrderStatus.ENTREGUE, OrderStatus.CANCELADO},
-    OrderStatus.ENTREGUE: set(),
-    OrderStatus.CANCELADO: set(),
-}
-
-
 def ensure_transition(table: dict, current: enum.Enum, target: enum.Enum, what: str) -> None:
     if target not in table[current]:
         raise AppError(
@@ -79,3 +72,13 @@ def ensure_transition(table: dict, current: enum.Enum, target: enum.Enum, what: 
             f"{what}: transição {current.value} → {target.value} não permitida.",
             {"current": current.value, "target": target.value},
         )
+
+
+TAG_TRANSITIONS: dict[TagStatus, set[TagStatus]] = {
+    TagStatus.PENDENTE: {TagStatus.GRAVANDO, TagStatus.FALHA, TagStatus.SUBSTITUIDA},
+    TagStatus.GRAVANDO: {TagStatus.GRAVADA, TagStatus.FALHA, TagStatus.SUBSTITUIDA},
+    TagStatus.GRAVADA: {TagStatus.TRAVADA, TagStatus.GRAVANDO, TagStatus.FALHA, TagStatus.SUBSTITUIDA},
+    TagStatus.TRAVADA: {TagStatus.SUBSTITUIDA},
+    TagStatus.FALHA: {TagStatus.GRAVANDO, TagStatus.SUBSTITUIDA},
+    TagStatus.SUBSTITUIDA: set(),
+}

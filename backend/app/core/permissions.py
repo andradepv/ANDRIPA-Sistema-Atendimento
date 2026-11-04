@@ -22,17 +22,13 @@ class Perm(str, enum.Enum):
     REQUESTS_VIEW = "requests.view"
     REQUESTS_HANDLE = "requests.handle"
     REQUESTS_PRIORITIZE = "requests.prioritize"
-    ORDERS_VIEW = "orders.view"
-    ORDERS_UPDATE_STATUS = "orders.update_status"
-    ORDERS_CANCEL = "orders.cancel"
     CASH_VIEW = "cash.view"
     HISTORY_VIEW = "history.view"
-    MENU_MANAGE = "menu.manage"
-    PROMOTIONS_MANAGE = "promotions.manage"
-    PUSH_SEND = "push.send"
     USERS_MANAGE = "users.manage"
     AUDIT_VIEW = "audit.view"
     SETTINGS_MANAGE = "settings.manage"
+    TABLES_PROVISION = "tables.provision"  # criar mesa + gravar/travar etiqueta NFC (só administrador)
+    LAYOUTS_MANAGE = "layouts.manage"      # editar e ativar plantas (templates) do salão (só administrador)
 
 
 _ATENDENTE = {
@@ -41,14 +37,11 @@ _ATENDENTE = {
     Perm.TABLES_REQUEST_CLOSE,
     Perm.REQUESTS_VIEW,
     Perm.REQUESTS_HANDLE,
-    Perm.ORDERS_VIEW,
-    Perm.ORDERS_UPDATE_STATUS,
 }
 
 _CAIXA = _ATENDENTE | {
     Perm.TABLES_CLOSE,
     Perm.REQUESTS_PRIORITIZE,
-    Perm.ORDERS_CANCEL,
     Perm.CASH_VIEW,
     Perm.HISTORY_VIEW,
 }

@@ -159,25 +159,24 @@ def test_no_duplicate_events_per_connection(client, world, instances):
     asyncio.run(run())
 
 
-def test_customer_ws_updates_and_session_close(client, world, instances, menu):
+def test_customer_ws_updates_and_session_close(client, world, instances):
     """Cenário F no tempo real: a conexão do cliente é encerrada (4001) e não reabre."""
     a, b = instances
     tid, code = world["tables"][0]
     open_table(world["atendente"], tid)
     cust = Customer(client, code)
-    order = cust.post("/api/v1/public/orders", json={"items": [{"product_id": menu["agua"]["id"], "quantity": 1}]}).json()
-    sid = order["session_id"]
+    call = cust.post("/api/v1/public/service-requests", json={"type": "CHAMAR_ATENDENTE"}).json()
+    sid = call["session_id"]
 
     async def run():
         ws = await customer_ws(b, cust.token)
-        r = await asyncio.to_thread(post, a, f"/api/v1/orders/{order['id']}/status", world["atendente"].headers(),
-                                    {"status": "ENTREGUE"})
+        r = await asyncio.to_thread(post, a, f"/api/v1/service-requests/{call['id']}/claim",
+                                    world["atendente"].headers(), {})
         assert r.status_code == 200
-        ev = await recv_event(ws, lambda m: m.get("type") == "order.updated"
-                              and m["data"]["order"]["status"] == "ENTREGUE")
-        assert ev["data"]["order"]["id"] == order["id"]
-        r = await asyncio.to_thread(post, a, f"/api/v1/table-sessions/{sid}/close", world["caixa"].headers(),
-                                    {"payment_method": "PIX"})
+        ev = await recv_event(ws, lambda m: m.get("type") == "request.updated"
+                              and m["data"]["request"]["status"] == "ASSUMIDA")
+        assert ev["data"]["request"]["id"] == call["id"]
+        r = await asyncio.to_thread(post, a, f"/api/v1/table-sessions/{sid}/close", world["caixa"].headers(), {})
         assert r.status_code == 200
         ev = await recv_event(ws, lambda m: m.get("type") == "session.closed")
         assert ev["data"]["session_id"] == sid
@@ -251,8 +250,10 @@ def test_reconnect_recovers_state(client, world, instances):
             assert {i["id"] for i in snap["items"]} == {r1["id"], r2["id"]}
             # E novos eventos continuam chegando após reconectar.
             await asyncio.to_thread(post, a, f"/api/v1/service-requests/{r1['id']}/claim", caixa.headers())
+            # O evento de criação (PENDENTE) pode chegar atrasado pelo outbox: espera o ASSUMIDA de fato.
             ev = await recv_event(ws2, lambda m: m.get("type") == "request.updated"
-                                  and m["data"]["request"]["id"] == r1["id"])
+                                  and m["data"]["request"]["id"] == r1["id"]
+                                  and m["data"]["request"]["status"] == "ASSUMIDA")
             assert ev["data"]["request"]["status"] == "ASSUMIDA"
 
     asyncio.run(run())

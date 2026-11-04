@@ -10,22 +10,22 @@ perfil não pode fazer, mas isso é só conveniência — o backend nega de qual
 | `tables.view` | ✔ | ✔ | ✔ | `GET /tables`, detalhe de sessão aberta |
 | `tables.open` | ✔ | ✔ | ✔ | `POST /tables/{id}/open` (com PIN/senha pessoal) |
 | `tables.request_close` | ✔ | ✔ | ✔ | `POST /tables/{id}/request-close` |
-| `tables.close` | | ✔ | ✔ | fechar conta, cancelar pedido de conta, concluir chamado PEDIR_CONTA |
+| `tables.close` | | ✔ | ✔ | encerrar a mesa, cancelar pedido de conta, concluir chamado PEDIR_CONTA |
 | `tables.manage` | | | ✔ | cadastrar/renumerar/desativar mesas, QR, novo endereço |
 | `requests.view` / `requests.handle` | ✔ | ✔ | ✔ | listar, assumir, iniciar, concluir chamados |
 | `requests.prioritize` | | ✔ | ✔ | prioridade manual; agir em chamado de outro funcionário |
-| `orders.view` / `orders.update_status` | ✔ | ✔ | ✔ | tela Pedidos |
-| `orders.cancel` | | ✔ | ✔ | cancelar pedido (motivo obrigatório) |
-| `cash.view` | | ✔ | ✔ | tela Caixa |
-| `history.view` | | ✔ | ✔ | histórico e detalhe de sessões encerradas |
-| `menu.manage` | | | ✔ | categorias, produtos, adicionais, disponibilidade |
-| `promotions.manage` | | | ✔ | promoções e cupons |
-| `push.send` | | | ✔ | envio de notificações |
+| `cash.view` | | ✔ | ✔ | tela Caixa (mesas abertas e pedidos de conta) |
+| `history.view` | | ✔ | ✔ | histórico de sessões encerradas e seus chamados |
 | `users.manage` | | | ✔ | equipe, papéis, senhas, PIN |
 | `audit.view` | | | ✔ | auditoria |
-| `settings.manage` | | | ✔ | nome, fuso, código de entrada, pedidos pelo celular |
+| `settings.manage` | | | ✔ | nome, fuso e código de entrada na mesa |
+| `tables.provision` | | | ✔ | criar mesa + gravar/travar etiqueta NFC (`/admin/tables/provision`, `/admin/tags/*`) |
+| `layouts.manage` | | | ✔ | criar, editar, ativar e excluir plantas do salão (`/admin/layouts/*`) |
 
 ## Regras adicionais
+- **Plantas e etiquetas**: qualquer funcionário *vê* a planta ativa (`GET /layouts/active`, exige `tables.view`);
+  só o administrador altera plantas e grava etiquetas. Criar a mesa com etiqueta, substituir e travar exigem
+  PIN ou senha do administrador (mesma confirmação individual da abertura de mesa).
 - **Administrador** recebe automaticamente todas as permissões, inclusive futuras (`frozenset(Perm)`).
 - **Escalonamento**: só `users.manage` altera papéis. Não é possível rebaixar/desativar a si mesmo nem
   remover o último administrador ativo.

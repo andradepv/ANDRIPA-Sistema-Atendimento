@@ -14,7 +14,6 @@ echo "3) Conferência de contagens por tabela"
 Q="SELECT string_agg(t || '=' || n, ' ' ORDER BY t) FROM (
   SELECT 'establishments' t, count(*) n FROM establishments UNION ALL SELECT 'users', count(*) FROM users UNION ALL
   SELECT 'tables', count(*) FROM tables UNION ALL SELECT 'table_sessions', count(*) FROM table_sessions UNION ALL
-  SELECT 'orders', count(*) FROM orders UNION ALL SELECT 'order_items', count(*) FROM order_items UNION ALL
   SELECT 'service_requests', count(*) FROM service_requests UNION ALL SELECT 'audit_logs', count(*) FROM audit_logs) x"
 A=$(psql -At -d "$SRC" -c "$Q"); B=$(psql -At -d "$DST" -c "$Q")
 echo "  origem:     $A"; echo "  restaurado: $B"
