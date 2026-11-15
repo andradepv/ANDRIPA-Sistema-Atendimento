@@ -13,7 +13,6 @@
 - [ ] Nenhum segredo no repositório (`git grep -i -E "password|secret|token"` revisado)
 - [ ] `ANDRIPA_ENVIRONMENT=production` (desliga `/docs` e o `seed-dev`)
 - [ ] `ANDRIPA_COOKIE_SECURE=true`, `ANDRIPA_ALLOWED_ORIGINS=https://<domínio>`
-- [ ] Chaves VAPID geradas e gravadas no Secrets Manager (se for usar push)
 
 ## Aplicação
 - [ ] CI verde no commit a publicar (lint, tipos, bandit, pip-audit, npm audit, testes, e2e)
@@ -26,9 +25,8 @@
 - [ ] A — abrir mesa e acessar pelo QR e pela etiqueta NFC em um Android e um iPhone
 - [ ] B — mesa livre mostra “não disponível”
 - [ ] C — chamar atendente aparece no painel em < 1 s
-- [ ] D — pedido com adicional chega correto à tela Pedidos
 - [ ] E — pedir a conta mantém a mesa ocupada
-- [ ] F — fechar conta: celular do cliente perde o acesso
+- [ ] F — encerrar a mesa: celular do cliente perde o acesso
 - [ ] G — dois funcionários abrindo a mesma mesa: só uma abertura
 - [ ] H — derrubar o Wi-Fi do tablet e voltar: painel recupera tudo
 - [ ] I — atendente não acessa funções administrativas

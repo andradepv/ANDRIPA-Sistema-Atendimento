@@ -11,7 +11,7 @@
 | Tarefa ECS avulsa `migrate` | `alembic upgrade head` antes de cada deploy |
 | RDS PostgreSQL 16 (criptografado, SSL obrigatório, backups, Performance Insights) | Fonte da verdade |
 | ElastiCache Redis 7 (TLS, criptografia em repouso) | Pub/Sub e rate limiting |
-| Secrets Manager | `DATABASE_URL`, `REDIS_URL`, chaves VAPID |
+| Secrets Manager | `DATABASE_URL`, `REDIS_URL` |
 | CloudWatch Logs (JSON), filtros de métrica e alarmes → SNS | Erros, Redis degradado, 5xx, p95, alvos não saudáveis, CPU e disco do RDS |
 | ECR (tags imutáveis, scan) | Imagens da API (últimas 30 mantidas para rollback) |
 
@@ -34,9 +34,6 @@ docker buildx build --platform linux/arm64 -t <ecr>:<sha> backend --push
 terraform apply -var-file=envs/staging.tfvars -var api_image_tag=<sha>
 # migração (o CI faz isso automaticamente; ver .github/workflows/deploy.yml)
 aws ecs run-task --cluster andripa-staging --task-definition andripa-staging-migrate ...
-# chaves de push (opcional)
-docker run --rm <ecr>:<sha> python -m app.cli gen-vapid
-aws secretsmanager put-secret-value --secret-id andripa-staging/app --secret-string '{...com as chaves...}'
 # estabelecimento e primeiro administrador (tarefa avulsa com o comando abaixo)
 python -m app.cli bootstrap --establishment "Nome do Bar" --tz America/Manaus --admin-name "..." --admin-username ...
 ```

@@ -1,4 +1,4 @@
-import type { RequestStatus, RequestType, ServiceRequest, TableStatus } from "../api/types";
+import type { RequestStatus, RequestType, ServiceRequest, TableStatus, TagStatus } from "../api/types";
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 export const money = (cents: number) => brl.format(cents / 100);
@@ -54,3 +54,12 @@ export function requestTitle(r: ServiceRequest): string {
 export function orderSummary(r: ServiceRequest): string {
   return (r.order?.items ?? []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ");
 }
+
+export const tagStatusLabel: Record<TagStatus, string> = {
+  PENDENTE: "Aguardando gravação",
+  GRAVANDO: "Gravando agora",
+  GRAVADA: "Gravada e conferida",
+  TRAVADA: "Gravada e travada",
+  FALHA: "Falhou",
+  SUBSTITUIDA: "Substituída",
+};

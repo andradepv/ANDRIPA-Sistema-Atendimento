@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import uuid
 
+from backend.app.core.config import get_settings
 from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CustomerCtx, get_customer
-from app.core.config import get_settings
 from app.core.ratelimit import client_ip, hit
 from app.db.session import get_db
 from app.schemas import (

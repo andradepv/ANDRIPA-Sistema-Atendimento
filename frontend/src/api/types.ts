@@ -18,6 +18,7 @@ export interface Establishment {
   name: string;
   timezone: string;
   orders_enabled: boolean;
+  join_code_required: boolean;
 }
 
 export interface Me {
@@ -31,6 +32,59 @@ export interface SessionBrief {
   id: string;
   opened_at: string;
   opened_by_name: string;
+}
+
+export type TagStatus = "PENDENTE" | "GRAVANDO" | "GRAVADA" | "TRAVADA" | "FALHA" | "SUBSTITUIDA";
+
+export interface TagBrief {
+  id: string;
+  status: TagStatus;
+  uid: string | null;
+  error: string | null;
+  updated_at: string;
+}
+
+/** Etiqueta NFC de uma mesa, com tudo que o assistente de gravação precisa. */
+export interface Tag {
+  id: string;
+  table_id: string;
+  table_number: number;
+  table_name: string | null;
+  status: TagStatus;
+  url: string;
+  uid: string | null;
+  error: string | null;
+  started_by_name: string;
+  lock_authorized_at: string | null;
+  written_at: string | null;
+  locked_at: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+}
+
+export interface ProvisionOut {
+  table: Table;
+  tag: Tag;
+  qr_svg_url: string;
+}
+
+export interface LayoutItem {
+  table_id: string;
+  x: number;
+  y: number;
+}
+
+/** Planta (template) do salão. A grade tem `cols` × `rows` células. */
+export interface Layout {
+  id: string;
+  name: string;
+  is_active: boolean;
+  version: number;
+  cols: number;
+  rows: number;
+  items: LayoutItem[];
+  updated_at: string;
 }
 
 export interface Table {
@@ -162,6 +216,7 @@ export interface PublicTable {
   table_name: string | null;
   available: boolean;
   orders_enabled: boolean;
+  join_code_required: boolean;
 }
 
 export interface CustomerSession {

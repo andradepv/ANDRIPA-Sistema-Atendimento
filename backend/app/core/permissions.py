@@ -25,6 +25,8 @@ class Perm(str, enum.Enum):
     USERS_MANAGE = "users.manage"
     AUDIT_VIEW = "audit.view"
     SETTINGS_MANAGE = "settings.manage"
+    TABLES_PROVISION = "tables.provision"  # criar mesa + gravar/travar etiqueta NFC (só administrador)
+    LAYOUTS_MANAGE = "layouts.manage"      # editar e ativar plantas (templates) do salão (só administrador)
 
 
 # Atendente: libera mesas e resolve chamados e pedidos.

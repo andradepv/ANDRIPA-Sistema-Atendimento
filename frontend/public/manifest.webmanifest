@@ -1,7 +1,7 @@
 {
   "name": "Andripa — Atendimento",
   "short_name": "Andripa",
-  "description": "Cardápio, pedidos e atendimento na mesa.",
+  "description": "Chamar o atendente e pedir a conta na mesa.",
   "lang": "pt-BR",
   "start_url": "/",
   "scope": "/",

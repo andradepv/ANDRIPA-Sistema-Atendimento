@@ -24,11 +24,13 @@ perfil não pode fazer, mas isso é só conveniência — o backend nega de qual
 | `users.manage` | | | ✔ | equipe, papéis, PIN |
 | `audit.view` | | | ✔ | auditoria |
 | `settings.manage` | | | ✔ | nome, fuso, pedidos pelo celular |
-
-A liberação pela página da mesa (`POST /public/tables/{código}/open`) não exige login: vale o PIN de
-qualquer pessoa ativa da equipe daquele estabelecimento.
+| `tables.provision` | | | ✔ | criar mesa + gravar/travar etiqueta NFC (`/admin/tables/provision`, `/admin/tags/*`) |
+| `layouts.manage` | | | ✔ | criar, editar, ativar e excluir plantas do salão (`/admin/layouts/*`) |
 
 ## Regras adicionais
+- **Plantas e etiquetas**: qualquer funcionário *vê* a planta ativa (`GET /layouts/active`, exige `tables.view`);
+  só o administrador altera plantas e grava etiquetas. Criar a mesa com etiqueta, substituir e travar exigem
+  PIN ou senha do administrador (mesma confirmação individual da abertura de mesa).
 - **Administrador** recebe automaticamente todas as permissões, inclusive futuras (`frozenset(Perm)`).
 - **Escalonamento**: só `users.manage` altera papéis. Não é possível rebaixar/desativar a si mesmo nem
   remover o último administrador ativo.

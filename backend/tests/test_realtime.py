@@ -17,6 +17,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from backend.app.api.routes.public import menu
 from conftest import TEST_REDIS, Actor, Customer, open_table, open_with_pin
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
@@ -159,7 +160,7 @@ def test_no_duplicate_events_per_connection(client, world, instances):
     asyncio.run(run())
 
 
-def test_customer_ws_updates_and_session_close(client, world, instances, menu):
+def test_customer_ws_updates_and_session_close(client, world, instances):
     """Cenário F no tempo real: a conexão do cliente é encerrada (4001) e não reabre."""
     a, b = instances
     tid, code = world["tables"][0]

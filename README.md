@@ -13,7 +13,7 @@ Tocar numa mesa mostra o atendimento atual e os anteriores, com o horário de ca
 
 - Backend: Python 3.12+ · FastAPI · Pydantic v2 · SQLAlchemy 2 (async, psycopg 3) · Alembic · WebSocket
 - Dados: PostgreSQL 16 (fonte da verdade + outbox) · Redis 7 (pub/sub entre instâncias, rate limiting)
-- Frontend: React 19 · TypeScript (strict) · Vite · PWA (manifest + service worker) · Web Push (VAPID)
+- Frontend: React 19 · TypeScript (strict) · Vite · PWA (manifest + service worker)
 - Infra: Docker · Terraform (AWS: CloudFront, S3, ALB, ECS Fargate, RDS, ElastiCache, Secrets Manager, CloudWatch) · GitHub Actions
 
 ## Rodar localmente
@@ -62,9 +62,9 @@ repositório, mova-os para `.github/workflows/`.
 ## Documentação
 | Documento | Conteúdo |
 |---|---|
-| [01 — Arquitetura](docs/01-arquitetura.md) | Fase 1 completa: requisitos, arquitetura, fluxos, modelo de dados, estratégias, plano, riscos |
+| [01 — Arquitetura](docs/01-arquitetura.md) | Requisitos, arquitetura, fluxos, modelo de dados, estratégias de concorrência |
 | [02 — Permissões](docs/02-permissoes.md) | Matriz RBAC e regras |
-| [03 — Estados](docs/03-estados.md) | Diagramas de mesa, chamado e pedido |
+| [03 — Estados](docs/03-estados.md) | Diagramas de mesa, sessão, chamado e etiqueta |
 | [04 — API](docs/04-api.md) · [openapi.json](docs/openapi.json) | Contratos, erros, idempotência, WebSocket |
 | [05 — Guia operacional](docs/05-guia-operacional.md) | Para atendentes, caixa e admin |
 | [06 — AWS](docs/06-implantacao-aws.md) | Implantação, pipeline, rollback, custos |
@@ -72,6 +72,7 @@ repositório, mova-os para `.github/workflows/`.
 | [08 — Checklist](docs/08-checklist-producao.md) | Publicação em produção |
 | [09 — Limitações](docs/09-limitacoes.md) | O que não está pronto |
 | [10 — Relatório de testes](docs/10-relatorio-testes.md) | Resultados reais |
+| [11 — Etiquetas NFC e planta do salão](docs/11-etiquetas-e-planta.md) | Criar mesa + gravar etiqueta, status ao vivo, templates de planta |
 | [ADRs](docs/adr) | Decisões de arquitetura |
 
 ## Estrutura

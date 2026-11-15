@@ -94,6 +94,7 @@ const NAV: { to: string; label: string; perm: string }[] = [
   { to: "/painel", label: "Salão", perm: "tables.view" },
   { to: "/admin/cardapio", label: "Cardápio", perm: "menu.manage" },
   { to: "/admin/mesas", label: "Mesas", perm: "tables.manage" },
+  { to: "/admin/planta", label: "Planta", perm: "layouts.manage" },
   { to: "/admin/usuarios", label: "Equipe", perm: "users.manage" },
   { to: "/admin/notificacoes", label: "Notificações", perm: "notices.manage" },
   { to: "/admin/auditoria", label: "Auditoria", perm: "audit.view" },
@@ -151,6 +152,7 @@ function Layout({ path, onLogout }: { path: string; onLogout: () => void }) {
         {path.startsWith("/painel/mesa/") && <TableDetail tableId={path.slice("/painel/mesa/".length)} />}
         {path.startsWith("/admin/cardapio") && <AdminMenu />}
         {path.startsWith("/admin/mesas") && <AdminTables />}
+        {path.startsWith("/admin/planta") && <AdminFloor />}
         {path.startsWith("/admin/usuarios") && <AdminUsers />}
         {path.startsWith("/admin/notificacoes") && <AdminNotices />}
         {path.startsWith("/admin/auditoria") && <AdminAudit />}

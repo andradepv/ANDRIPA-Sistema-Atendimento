@@ -2,8 +2,8 @@
 
 - Base: `/api/v1`. Contrato completo gerado pelo FastAPI em `docs/openapi.json` (também em
   `/api/v1/docs` fora de produção).
-- JSON em UTF-8; datas em ISO 8601 **UTC**; valores em **centavos** (inteiros).
-- Corpos com campos desconhecidos são rejeitados (`extra="forbid"`): não dá para enviar `price_cents`,
+- JSON em UTF-8; datas em ISO 8601 **UTC**.
+- Corpos com campos desconhecidos são rejeitados (`extra="forbid"`): não dá para enviar
   `session_id` ou `table_id` para “apontar” outro recurso.
 - Limite de corpo: 64 KiB (`413 payload_too_large`).
 

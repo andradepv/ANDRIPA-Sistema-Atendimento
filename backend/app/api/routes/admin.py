@@ -12,7 +12,7 @@ from app.core.errors import AppError, conflict, not_found
 from app.core.permissions import Perm, Role
 from app.core.security import hash_secret
 from app.db.session import get_db
-from app.models import AuditLog, Establishment, PushSubscription, StaffSession, User
+from app.models import AuditLog, Establishment, StaffSession, User
 from app.schemas import (
     AuditOut,
     EstablishmentOut,
@@ -22,6 +22,7 @@ from app.schemas import (
     NoticeOut,
     NoticePatch,
     Page,
+    PushSubscriptionIn,
     UserCreate,
     UserOut,
     UserPatch,
@@ -177,6 +178,6 @@ async def delete_notice(notice_id: uuid.UUID, ctx: StaffCtx = Depends(require(Pe
 async def push_stats(ctx: StaffCtx = Depends(require(Perm.NOTICES_MANAGE)), db: AsyncSession = Depends(get_db)) -> dict:
     from app.core.config import get_settings
     n = (await db.execute(select(func.count()).where(
-        PushSubscription.establishment_id == ctx.establishment_id, PushSubscription.revoked_at.is_(None),
-        PushSubscription.consent_marketing.is_(True)))).scalar_one()
+        PushSubscriptionIn.establishment_id == ctx.establishment_id, PushSubscriptionIn.revoked_at.is_(None),
+        PushSubscriptionIn.consent_marketing.is_(True)))).scalar_one()
     return {"enabled": get_settings().push_enabled, "subscribers": int(n)}

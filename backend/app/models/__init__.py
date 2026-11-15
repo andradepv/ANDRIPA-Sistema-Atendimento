@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.core.permissions import Role
-from app.domain.states import RequestStatus, RequestType, SessionStatus, TableStatus
+from app.domain.states import RequestStatus, RequestType, SessionStatus, TableStatus, TagStatus
 
 NAMING = {
     "ix": "ix_%(column_0_label)s",
@@ -38,7 +38,7 @@ NAMING = {
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING)
-    # Busca valores gerados pelo servidor (created_at, número do pedido) via RETURNING.
+    # Busca valores gerados pelo servidor (ex.: created_at) via RETURNING.
     __mapper_args__ = {"eager_defaults": True}
 
 
@@ -73,6 +73,7 @@ class Establishment(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="America/Sao_Paulo")
     orders_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    join_code_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = _updated()
 
@@ -316,31 +317,69 @@ class IdempotencyKey(Base):
     created_at: Mapped[datetime] = _created()
 
 
-class PushSubscription(Base):
-    __tablename__ = "push_subscriptions"
+class TableTag(Base):
+    """Etiqueta NFC de uma mesa. A URL gravada vem sempre do servidor (nunca digitada)."""
+
+    __tablename__ = "table_tags"
+    __table_args__ = (
+        # No máximo uma etiqueta "viva" por mesa; tentativas antigas ficam como FALHA/SUBSTITUIDA.
+        Index("uq_live_tag_per_table", "table_id", unique=True,
+              postgresql_where=text("status IN ('PENDENTE','GRAVANDO','GRAVADA','TRAVADA')")),
+        # Um mesmo chip físico (UID) não pode representar duas mesas ao mesmo tempo.
+        Index("uq_tag_uid_in_use", "establishment_id", "uid", unique=True,
+              postgresql_where=text("uid IS NOT NULL AND status IN ('GRAVADA','TRAVADA')")),
+        Index("ix_table_tags_est_updated", "establishment_id", "updated_at"),
+    )
     id: Mapped[uuid.UUID] = _uuid_pk()
     establishment_id: Mapped[uuid.UUID] = _est_fk()
-    endpoint: Mapped[str] = mapped_column(String(1000), nullable=False, unique=True)
-    p256dh: Mapped[str] = mapped_column(String(200), nullable=False)
-    auth: Mapped[str] = mapped_column(String(100), nullable=False)
-    consent_marketing: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    created_at: Mapped[datetime] = _created()
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-
-class Notice(Base):
-    """Aviso aos clientes (promoção, evento, novidade). Para saber mais, o cliente chama um atendente."""
-    __tablename__ = "notices"
-    __table_args__ = (Index("ix_notices_est_active", "establishment_id", "active"),)
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    establishment_id: Mapped[uuid.UUID] = _est_fk()
-    title: Mapped[str] = mapped_column(String(120), nullable=False)
-    message: Mapped[str | None] = mapped_column(String(500))
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    table_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tables.id", ondelete="RESTRICT"), nullable=False, index=True)
+    status: Mapped[TagStatus] = mapped_column(_enum(TagStatus, "tag_status"), nullable=False,
+                                              default=TagStatus.PENDENTE)
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    uid: Mapped[str | None] = mapped_column(String(32))
+    error: Mapped[str | None] = mapped_column(String(280))
+    started_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    lock_authorized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    written_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = _updated()
+
+    table: Mapped[DiningTable] = relationship(foreign_keys=[table_id], lazy="joined")
+    started_by: Mapped[User] = relationship(foreign_keys=[started_by_id], lazy="joined")
+
+
+class FloorLayout(Base):
+    """Planta (template) do salão. Só uma por estabelecimento fica ativa; só o administrador altera."""
+
+    __tablename__ = "floor_layouts"
+    __table_args__ = (
+        UniqueConstraint("establishment_id", "name", name="uq_floor_layouts_est_name"),
+        Index("uq_active_layout_per_est", "establishment_id", unique=True, postgresql_where=text("is_active")),
+    )
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    establishment_id: Mapped[uuid.UUID] = _est_fk()
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
+
+    items: Mapped[list[FloorLayoutItem]] = relationship(lazy="selectin", cascade="all, delete-orphan",
+                                                         order_by="FloorLayoutItem.y, FloorLayoutItem.x")
+
+
+class FloorLayoutItem(Base):
+    __tablename__ = "floor_layout_items"
+    __table_args__ = (
+        UniqueConstraint("layout_id", "x", "y", name="uq_floor_item_cell"),
+        CheckConstraint("x >= 0 AND x < 24 AND y >= 0 AND y < 16", name="cell_in_grid"),
+    )
+    layout_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("floor_layouts.id", ondelete="CASCADE"), primary_key=True)
+    table_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tables.id", ondelete="CASCADE"), primary_key=True)
+    x: Mapped[int] = mapped_column(Integer, nullable=False)
+    y: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class AuditLog(Base):

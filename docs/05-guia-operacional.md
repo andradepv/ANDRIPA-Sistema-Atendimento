@@ -1,4 +1,4 @@
-# Guia operacional — equipe
+# Guia operacional — atendentes, caixa e administrador
 
 O Andripa serve para **avisar a equipe** de que uma mesa precisa de atendimento. Tudo é feito com um toque.
 

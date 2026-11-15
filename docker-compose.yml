@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: atende
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atende-dev}
       POSTGRES_DB: atende
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["5432:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/docker/init-test-db.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
@@ -19,7 +19,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["127.0.0.1:6379:6379"]
+    ports: ["6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
@@ -37,7 +37,7 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
-    ports: ["127.0.0.1:8000:8000"]
+    ports: ["8000:8000"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -51,7 +51,7 @@ services:
     volumes:
       - ./frontend:/web
       - webmodules:/web/node_modules
-    ports: ["127.0.0.1:5173:5173"]
+    ports: ["5173:5173"]
     depends_on: [api]
 
 volumes:

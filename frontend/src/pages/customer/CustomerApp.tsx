@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, errorMessage, newIdempotencyKey } from "../../api/http";
 import type { CustomerSession, MenuCategory, Notice, Product, PublicTable, RealtimeEvent, ServiceRequest } from "../../api/types";
 import { Dialog, useToast } from "../../components/ui";
@@ -141,7 +141,6 @@ function lineUnit(l: CartLine): number {
 function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void }) {
   const toast = useToast();
   const [s, setS] = useState<CustomerSession | null>(null);
-  const [tab, setTab] = useState<Tab>("mesa");
   const [conn, setConn] = useState<SocketStatus>("connecting");
   const [menu, setMenu] = useState<MenuCategory[] | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -166,45 +165,9 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
     }
   }, [token, ended, toast]);
 
-  const loadMenu = useCallback(async () => {
-    try {
-      setMenu(await api<MenuCategory[]>("/public/menu", { bearer: token }));
-    } catch (e) {
-      ended(e);
-    }
-  }, [token, ended]);
-
   useEffect(() => {
     void refresh();
-    void loadMenu();
-  }, [refresh, loadMenu]);
-
-  // Carrinho persistido por sessão de mesa (sobrevive a recarregar a página).
-  useEffect(() => {
-    if (!s) return;
-    try {
-      const raw = sessionStorage.getItem(`andripa:cart:${s.session_id}`);
-      if (raw && menu) {
-        const saved = JSON.parse(raw) as { productId: string; quantity: number; optionIds: string[]; notes: string; key: string }[];
-        const products = new Map(menu.flatMap((c) => c.products).map((p) => [p.id, p]));
-        setCart(saved.flatMap((x) => (products.get(x.productId) ? [{ ...x, product: products.get(x.productId)! }] : [])));
-      }
-    } catch {
-      /* ignore */
-    }
-  }, [s?.session_id, menu]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!s) return;
-    try {
-      sessionStorage.setItem(
-        `andripa:cart:${s.session_id}`,
-        JSON.stringify(cart.map((l) => ({ key: l.key, productId: l.product.id, quantity: l.quantity, optionIds: l.optionIds, notes: l.notes }))),
-      );
-    } catch {
-      /* ignore */
-    }
-  }, [cart, s?.session_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [refresh]);
 
   useEffect(() => {
     return openSocket({
@@ -222,11 +185,10 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
         else if (ev.type === "notices.updated") setNoticesVersion((v) => v + 1);
       },
     });
-  }, [token, refresh, loadMenu, onEnded]);
+  }, [token, refresh, onEnded]);
 
   if (!s) return <Splash text="Carregando…" />;
 
-  const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
   return (
     <div className="c-shell">
       <header className="c-head">
@@ -242,7 +204,6 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
           {conn !== "online" && <span className="c-offline">{conn === "connecting" ? "Conectando…" : "Sem conexão"}</span>}
         </div>
       </header>
-
       <main className="c-main">
         {tab === "mesa" && <HomeTab s={s} token={token} onChanged={refresh} onEnded={ended} goMenu={() => setTab("cardapio")} />}
         {tab === "cardapio" && (
@@ -289,7 +250,6 @@ function HomeTab(props: {
   token: string;
   onChanged: () => Promise<void>;
   onEnded: (e: unknown) => boolean;
-  goMenu: () => void;
 }) {
   const { s } = props;
   const toast = useToast();
@@ -340,11 +300,6 @@ function HomeTab(props: {
           <span className="big-btn__title">{billRequested ? "Conta solicitada" : "Pedir a conta"}</span>
           <span className="big-btn__sub">{billRequested ? "O caixa já foi avisado" : "Avisa o caixa para fechar a mesa"}</span>
         </button>
-        {s.orders_enabled && (
-          <button className="btn btn--ghost btn--block" onClick={props.goMenu}>
-            Ver cardápio e fazer pedido
-          </button>
-        )}
       </div>
 
       {call?.status === "PENDENTE" && (

@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from app.core.permissions import Role
-from app.domain.states import RequestStatus, RequestType, TableStatus
+from app.domain.states import RequestStatus, RequestType, TableStatus, TagStatus
 
 Str80 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 Str120 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
@@ -19,6 +19,8 @@ Username = Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True
 Pin = Annotated[str, StringConstraints(pattern=r"^\d{4,8}$")]
 HttpsUrl = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500,
                                             pattern=r"^https://[^\s<>\"']+$")] | None
+Email = Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, max_length=254,
+                                         pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
 
 
 class Out(BaseModel):
@@ -55,12 +57,14 @@ class EstablishmentOut(Out):
     name: str
     timezone: str
     orders_enabled: bool
+    join_code_required: bool
 
 
 class EstablishmentPatch(In):
     name: Str120 | None = None
     timezone: Annotated[str, StringConstraints(max_length=64)] | None = None
     orders_enabled: bool | None = None
+    join_code_required: bool | None = None
 
     @field_validator("timezone")
     @classmethod
@@ -110,6 +114,14 @@ class SessionBrief(Out):
     id: uuid.UUID
     opened_at: datetime
     opened_by_name: str
+
+
+class TagBrief(Out):
+    id: uuid.UUID
+    status: TagStatus
+    uid: str | None = None
+    error: str | None = None
+    updated_at: datetime
 
 
 class TableOut(Out):
@@ -323,6 +335,7 @@ class PublicTableOut(BaseModel):
     table_name: str | None
     available: bool
     orders_enabled: bool
+    join_code_required: bool
 
 
 class JoinOut(BaseModel):
@@ -390,6 +403,9 @@ class PushBroadcastOut(BaseModel):
     sent: int
     failed: int
     removed: int
+    table_status: TableStatus
+    opened_at: datetime
+    requests: list[ServiceRequestOut]
 
 
 class NoticeCreatedOut(BaseModel):
@@ -409,3 +425,89 @@ class AuditOut(BaseModel):
 
 
 MeOut.model_rebuild()
+
+
+# ---------- etiquetas NFC (provisionamento) ----------
+class ProvisionIn(In):
+    number: int = Field(ge=1, le=9999)
+    name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] | None = None
+    confirm_secret: str = Field(min_length=4, max_length=256, description="PIN pessoal ou senha do administrador")
+
+
+class TagStartIn(In):
+    confirm_secret: str = Field(min_length=4, max_length=256)
+    replace: bool = False
+
+
+class TagWrittenIn(In):
+    uid: str = Field(min_length=8, max_length=40, pattern=r"^[0-9A-Fa-f:]+$")
+    read_url: str = Field(min_length=1, max_length=500, description="URL lida de volta da etiqueta")
+
+
+class TagFailedIn(In):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=280)]
+
+
+class TagLockAuthIn(In):
+    confirm_secret: str = Field(min_length=4, max_length=256)
+
+
+class TagOut(Out):
+    id: uuid.UUID
+    table_id: uuid.UUID
+    table_number: int
+    table_name: str | None
+    status: TagStatus
+    url: str
+    uid: str | None
+    error: str | None
+    started_by_name: str
+    lock_authorized_at: datetime | None
+    written_at: datetime | None
+    locked_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    version: int
+
+
+class ProvisionOut(BaseModel):
+    table: TableOut
+    tag: TagOut
+    qr_svg_url: str
+
+
+# ---------- planta do salão ----------
+GRID_COLS = 24
+GRID_ROWS = 16
+
+
+class LayoutItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+    table_id: uuid.UUID
+    x: int = Field(ge=0, lt=GRID_COLS)
+    y: int = Field(ge=0, lt=GRID_ROWS)
+
+
+class LayoutOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    is_active: bool
+    version: int
+    cols: int = GRID_COLS
+    rows: int = GRID_ROWS
+    items: list[LayoutItem]
+    updated_at: datetime
+
+
+class LayoutCreateIn(In):
+    name: Str80
+    copy_from: uuid.UUID | None = None
+
+
+class LayoutRenameIn(In):
+    name: Str80
+
+
+class LayoutItemsIn(In):
+    version: int = Field(ge=1)
+    items: list[LayoutItem] = Field(max_length=GRID_COLS * GRID_ROWS)

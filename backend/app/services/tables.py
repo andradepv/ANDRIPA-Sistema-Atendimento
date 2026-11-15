@@ -4,6 +4,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
+from backend.app.services.layouts import layout_out
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +53,7 @@ async def create_table(db: AsyncSession, ctx: StaffCtx, data: TableCreate) -> Ta
         raise conflict("table_number_taken", f"Já existe a mesa {data.number}.") from e
     audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="table.create",
           target_type="table", target_id=t.id, details={"number": data.number})
+    await layout_out.auto_place(db, ctx.establishment_id, t.id)
     return await emit_table(db, t)
 
 
