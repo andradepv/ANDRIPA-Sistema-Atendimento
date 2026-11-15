@@ -3,6 +3,7 @@
 Ninguém digita a URL: o celular do administrador recebe do servidor exatamente o que deve gravar, lê de volta
 e devolve o resultado, que é conferido aqui. Cada passo vira um evento `tag.updated` (tempo real) e auditoria.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -45,8 +46,11 @@ def _norm_url(u: str) -> str:
 
 
 async def _load(db: AsyncSession, est_id: uuid.UUID, tag_id: uuid.UUID, *, lock: bool = True) -> TableTag:
-    q = (select(TableTag).where(TableTag.id == tag_id, TableTag.establishment_id == est_id)
-         .execution_options(populate_existing=True))
+    q = (
+        select(TableTag)
+        .where(TableTag.id == tag_id, TableTag.establishment_id == est_id)
+        .execution_options(populate_existing=True)
+    )
     if lock:
         q = q.with_for_update(of=TableTag)
     g = (await db.execute(q)).unique().scalar_one_or_none()
@@ -71,8 +75,13 @@ def _move(g: TableTag, target: TagStatus, *, error: str | None = None) -> None:
 
 
 async def _new_attempt(db: AsyncSession, ctx: StaffCtx, t: DiningTable) -> TableTag:
-    g = TableTag(establishment_id=t.establishment_id, table_id=t.id, status=TagStatus.PENDENTE,
-                 url=public_url(t), started_by_id=ctx.user.id)
+    g = TableTag(
+        establishment_id=t.establishment_id,
+        table_id=t.id,
+        status=TagStatus.PENDENTE,
+        url=public_url(t),
+        started_by_id=ctx.user.id,
+    )
     db.add(g)
     try:
         await db.flush()
@@ -83,35 +92,61 @@ async def _new_attempt(db: AsyncSession, ctx: StaffCtx, t: DiningTable) -> Table
 
 async def provision_table(db: AsyncSession, ctx: StaffCtx, data: ProvisionIn, ip: str | None) -> ProvisionOut:
     """Cria a mesa (código, QR, posição na planta) e abre a gravação da etiqueta, tudo numa transação."""
-    await table_svc.confirm_identity(db, ctx, data.confirm_secret, action="tag.confirm_denied",
-                                     target_type="table", target_id=None, ip=ip)
+    await table_svc.confirm_identity(
+        db, ctx, data.confirm_secret, action="tag.confirm_denied", target_type="table", target_id=None, ip=ip
+    )
     await table_svc.create_table(db, ctx, TableCreate(number=data.number, name=data.name))
-    t = (await db.execute(select(DiningTable).where(
-        DiningTable.establishment_id == ctx.establishment_id, DiningTable.number == data.number)
-        .execution_options(populate_existing=True))).scalar_one()
+    t = (
+        await db.execute(
+            select(DiningTable)
+            .where(DiningTable.establishment_id == ctx.establishment_id, DiningTable.number == data.number)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
     g = await _new_attempt(db, ctx, t)
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="tag.provision",
-          target_type="table_tag", target_id=g.id, details={"table": t.number}, ip=ip)
+    audit(
+        db,
+        establishment_id=ctx.establishment_id,
+        actor_id=ctx.user.id,
+        action="tag.provision",
+        target_type="table_tag",
+        target_id=g.id,
+        details={"table": t.number},
+        ip=ip,
+    )
     tag = await _emit(db, g)
     return ProvisionOut(table=await table_out(db, t), tag=tag, qr_svg_url=f"/api/v1/tables/{t.id}/qr.svg")
 
 
-async def start_tag(db: AsyncSession, ctx: StaffCtx, table_id: uuid.UUID, data: TagStartIn,
-                    ip: str | None) -> TagOut:
+async def start_tag(db: AsyncSession, ctx: StaffCtx, table_id: uuid.UUID, data: TagStartIn, ip: str | None) -> TagOut:
     """Abre (ou reabre) a gravação da etiqueta de uma mesa existente."""
-    await table_svc.confirm_identity(db, ctx, data.confirm_secret, action="tag.confirm_denied",
-                                     target_type="table", target_id=table_id, ip=ip)
+    await table_svc.confirm_identity(
+        db, ctx, data.confirm_secret, action="tag.confirm_denied", target_type="table", target_id=table_id, ip=ip
+    )
     t = await table_svc.get_table(db, ctx.establishment_id, table_id, lock=True)
     if not t.active:
         raise conflict("table_inactive", "Mesa desativada.")
-    live = (await db.execute(select(TableTag).where(
-        TableTag.table_id == t.id, TableTag.status.in_(LIVE_TAG_STATUSES))
-        .with_for_update(of=TableTag).execution_options(populate_existing=True))).unique().scalar_one_or_none()
+    live = (
+        (
+            await db.execute(
+                select(TableTag)
+                .where(TableTag.table_id == t.id, TableTag.status.in_(LIVE_TAG_STATUSES))
+                .with_for_update(of=TableTag)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .unique()
+        .scalar_one_or_none()
+    )
     if live is not None:
         if live.status in (TagStatus.GRAVADA, TagStatus.TRAVADA):
             if not data.replace:
-                raise conflict("tag_exists", f"A mesa {t.number} já tem etiqueta {live.status.value.lower()}. "
-                                              "Confirme a substituição para gravar outra.", status=live.status.value)
+                raise conflict(
+                    "tag_exists",
+                    f"A mesa {t.number} já tem etiqueta {live.status.value.lower()}. "
+                    "Confirme a substituição para gravar outra.",
+                    status=live.status.value,
+                )
             if t.status != TableStatus.LIVRE:
                 raise conflict("table_in_use", "Feche a mesa antes de substituir a etiqueta.")
             # A etiqueta antiga pode continuar existindo (uma travada não se apaga): o endereço muda,
@@ -121,8 +156,16 @@ async def start_tag(db: AsyncSession, ctx: StaffCtx, table_id: uuid.UUID, data: 
         _move(live, TagStatus.SUBSTITUIDA)
         await _emit(db, live)
     g = await _new_attempt(db, ctx, t)
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="tag.start",
-          target_type="table_tag", target_id=g.id, details={"table": t.number, "replace": data.replace}, ip=ip)
+    audit(
+        db,
+        establishment_id=ctx.establishment_id,
+        actor_id=ctx.user.id,
+        action="tag.start",
+        target_type="table_tag",
+        target_id=g.id,
+        details={"table": t.number, "replace": data.replace},
+        ip=ip,
+    )
     if live is not None and live.status == TagStatus.SUBSTITUIDA and data.replace:
         await table_svc.emit_table(db, t)
     return await _emit(db, g)
@@ -130,11 +173,24 @@ async def start_tag(db: AsyncSession, ctx: StaffCtx, table_id: uuid.UUID, data: 
 
 async def list_tags(db: AsyncSession, est_id: uuid.UUID) -> list[TagOut]:
     since = _now() - timedelta(hours=24)
-    rows = (await db.execute(select(TableTag).where(
-        TableTag.establishment_id == est_id, TableTag.status != TagStatus.SUBSTITUIDA,
-        (TableTag.status.in_(LIVE_TAG_STATUSES)) | (TableTag.updated_at >= since))
-        .order_by(TableTag.updated_at.desc()).limit(500).execution_options(populate_existing=True))
-    ).unique().scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(TableTag)
+                .where(
+                    TableTag.establishment_id == est_id,
+                    TableTag.status != TagStatus.SUBSTITUIDA,
+                    (TableTag.status.in_(LIVE_TAG_STATUSES)) | (TableTag.updated_at >= since),
+                )
+                .order_by(TableTag.updated_at.desc())
+                .limit(500)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .unique()
+        .scalars()
+        .all()
+    )
     return [tag_out(g) for g in rows]
 
 
@@ -147,8 +203,9 @@ async def mark_writing(db: AsyncSession, ctx: StaffCtx, tag_id: uuid.UUID) -> Ta
         raise conflict("tag_in_progress", "Já existe uma etiqueta em andamento para esta mesa.") from e
 
 
-async def mark_written(db: AsyncSession, ctx: StaffCtx, tag_id: uuid.UUID, data: TagWrittenIn,
-                       ip: str | None) -> TagOut:
+async def mark_written(
+    db: AsyncSession, ctx: StaffCtx, tag_id: uuid.UUID, data: TagWrittenIn, ip: str | None
+) -> TagOut:
     g = await _load(db, ctx.establishment_id, tag_id)
     if g.status != TagStatus.GRAVANDO:
         ensure_transition(TAG_TRANSITIONS, g.status, TagStatus.GRAVADA, "Etiqueta")
@@ -161,16 +218,35 @@ async def mark_written(db: AsyncSession, ctx: StaffCtx, tag_id: uuid.UUID, data:
     elif _norm_url(g.url) != _norm_url(public_url(t)):
         problem = ("tag_url_stale", "O endereço da mesa mudou durante a gravação. Inicie uma nova gravação.", 409)
     else:
-        other = (await db.execute(select(TableTag).where(
-            TableTag.establishment_id == ctx.establishment_id, TableTag.uid == uid, TableTag.id != g.id,
-            TableTag.status.in_((TagStatus.GRAVADA, TagStatus.TRAVADA))))).unique().scalar_one_or_none()
+        other = (
+            (
+                await db.execute(
+                    select(TableTag).where(
+                        TableTag.establishment_id == ctx.establishment_id,
+                        TableTag.uid == uid,
+                        TableTag.id != g.id,
+                        TableTag.status.in_((TagStatus.GRAVADA, TagStatus.TRAVADA)),
+                    )
+                )
+            )
+            .unique()
+            .scalar_one_or_none()
+        )
         if other is not None:
             problem = ("tag_uid_in_use", f"Esta etiqueta física já está em uso na mesa {other.table.number}.", 409)
     if problem is not None:
         code, msg, status = problem
         _move(g, TagStatus.FALHA, error=msg)
-        audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="tag.write_failed",
-              target_type="table_tag", target_id=g.id, details={"table": t.number, "code": code}, ip=ip)
+        audit(
+            db,
+            establishment_id=ctx.establishment_id,
+            actor_id=ctx.user.id,
+            action="tag.write_failed",
+            target_type="table_tag",
+            target_id=g.id,
+            details={"table": t.number, "code": code},
+            ip=ip,
+        )
         await _emit(db, g)
         await db.commit()  # a falha precisa ficar registrada mesmo devolvendo erro
         raise AppError(status, code, msg)
@@ -182,30 +258,53 @@ async def mark_written(db: AsyncSession, ctx: StaffCtx, tag_id: uuid.UUID, data:
         out = await _emit(db, g)
     except IntegrityError as e:  # corrida: outro administrador gravou o mesmo chip neste instante
         raise conflict("tag_uid_in_use", "Esta etiqueta física já está em uso em outra mesa.") from e
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="tag.written",
-          target_type="table_tag", target_id=g.id, details={"table": t.number, "uid": uid}, ip=ip)
+    audit(
+        db,
+        establishment_id=ctx.establishment_id,
+        actor_id=ctx.user.id,
+        action="tag.written",
+        target_type="table_tag",
+        target_id=g.id,
+        details={"table": t.number, "uid": uid},
+        ip=ip,
+    )
     return out
 
 
 async def mark_failed(db: AsyncSession, ctx: StaffCtx, tag_id: uuid.UUID, reason: str) -> TagOut:
     g = await _load(db, ctx.establishment_id, tag_id)
     _move(g, TagStatus.FALHA, error=reason)
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="tag.failed",
-          target_type="table_tag", target_id=g.id, details={"reason": reason})
+    audit(
+        db,
+        establishment_id=ctx.establishment_id,
+        actor_id=ctx.user.id,
+        action="tag.failed",
+        target_type="table_tag",
+        target_id=g.id,
+        details={"reason": reason},
+    )
     return await _emit(db, g)
 
 
 async def authorize_lock(db: AsyncSession, ctx: StaffCtx, tag_id: uuid.UUID, secret: str, ip: str | None) -> TagOut:
     """Travar é irreversível: exige a senha/PIN do administrador, e só vale por alguns minutos."""
-    await table_svc.confirm_identity(db, ctx, secret, action="tag.confirm_denied", target_type="table_tag",
-                                     target_id=tag_id, ip=ip)
+    await table_svc.confirm_identity(
+        db, ctx, secret, action="tag.confirm_denied", target_type="table_tag", target_id=tag_id, ip=ip
+    )
     g = await _load(db, ctx.establishment_id, tag_id)
     if g.status != TagStatus.GRAVADA:
         raise conflict("tag_not_ready", "Só é possível travar uma etiqueta gravada e conferida.", status=g.status.value)
     g.lock_authorized_at = _now()
     g.version += 1
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="tag.lock_authorized",
-          target_type="table_tag", target_id=g.id, ip=ip)
+    audit(
+        db,
+        establishment_id=ctx.establishment_id,
+        actor_id=ctx.user.id,
+        action="tag.lock_authorized",
+        target_type="table_tag",
+        target_id=g.id,
+        ip=ip,
+    )
     return await _emit(db, g)
 
 
@@ -217,6 +316,14 @@ async def mark_locked(db: AsyncSession, ctx: StaffCtx, tag_id: uuid.UUID, ip: st
         raise conflict("lock_not_authorized", "Confirme a senha para travar a etiqueta.")
     _move(g, TagStatus.TRAVADA)
     g.locked_at = _now()
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="tag.locked",
-          target_type="table_tag", target_id=g.id, details={"uid": g.uid}, ip=ip)
+    audit(
+        db,
+        establishment_id=ctx.establishment_id,
+        actor_id=ctx.user.id,
+        action="tag.locked",
+        target_type="table_tag",
+        target_id=g.id,
+        details={"uid": g.uid},
+        ip=ip,
+    )
     return await _emit(db, g)
