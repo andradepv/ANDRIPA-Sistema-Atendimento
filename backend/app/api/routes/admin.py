@@ -177,7 +177,15 @@ async def delete_notice(notice_id: uuid.UUID, ctx: StaffCtx = Depends(require(Pe
 @router.get("/push/stats")
 async def push_stats(ctx: StaffCtx = Depends(require(Perm.NOTICES_MANAGE)), db: AsyncSession = Depends(get_db)) -> dict:
     from app.core.config import get_settings
-    n = (await db.execute(select(func.count()).where(
-        PushSubscriptionIn.establishment_id == ctx.establishment_id, PushSubscriptionIn.revoked_at.is_(None),
-        PushSubscriptionIn.consent_marketing.is_(True)))).scalar_one()
+    from app.models import PushSubscription
+
+    n = (
+        await db.execute(
+            select(func.count()).where(
+                PushSubscription.establishment_id == ctx.establishment_id,
+                PushSubscription.revoked_at.is_(None),
+                PushSubscription.consent_marketing.is_(True),
+            )
+        )
+    ).scalar_one()
     return {"enabled": get_settings().push_enabled, "subscribers": int(n)}

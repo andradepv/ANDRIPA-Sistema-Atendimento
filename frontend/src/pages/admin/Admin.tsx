@@ -1,10 +1,153 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "../../api/http";
-import type { AuditEntry, Category, Establishment, Notice, Page, Product, Role, Table, User, Tag } from "../../api/types";
+import type { AuditEntry, Category, Establishment, Notice, Page, Product, ProvisionOut, Role, Table, User, Tag } from "../../api/types";
 import { Dialog, Empty, Field, useToast } from "../../components/ui";
 import { dateTime, money, tableStatusLabel } from "../../lib/format";
 import { useStaff } from "../staff/StaffData";
 import { qrUrl, StartTagDialog, TagBadge, TagWizard, useTagOf, WritingNow } from "./TagWizard";
+
+export function AdminMenu() {
+  const toast = useToast();
+  const [cats, setCats] = useState<Category[]>([]);
+  const [prods, setProds] = useState<Product[]>([]);
+  const [catName, setCatName] = useState("");
+  const [pForm, setPForm] = useState({ category_id: "", name: "", description: "", price: "" });
+
+  const load = useCallback(async () => {
+    const [c, p] = await Promise.all([
+      api<Category[]>("/admin/categories?include_inactive=true"),
+      api<Product[]>("/admin/products?include_inactive=true"),
+    ]);
+    setCats(c);
+    setProds(p);
+    setPForm((f) => ({ ...f, category_id: f.category_id || c[0]?.id || "" }));
+  }, []);
+
+  useEffect(() => {
+    load().catch((e) => toast(errorMessage(e), "error"));
+  }, [load, toast]);
+
+  const addCat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api("/admin/categories", { body: { name: catName, position: cats.length } });
+      setCatName("");
+      await load();
+      toast("Categoria criada.", "ok");
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    }
+  };
+
+  const addProd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cents = Math.round(Number(pForm.price.replace(",", ".")) * 100);
+    if (!Number.isFinite(cents) || cents < 0) {
+      toast("Preço inválido.", "error");
+      return;
+    }
+    try {
+      await api("/admin/products", {
+        body: {
+          category_id: pForm.category_id,
+          name: pForm.name,
+          description: pForm.description || null,
+          price_cents: cents,
+        },
+      });
+      setPForm((f) => ({ ...f, name: "", description: "", price: "" }));
+      await load();
+      toast("Item adicionado ao cardápio.", "ok");
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    }
+  };
+
+  const toggleProd = async (p: Product, body: Record<string, unknown>) => {
+    try {
+      await api(`/admin/products/${p.id}`, { method: "PATCH", body });
+      await load();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    }
+  };
+
+  return (
+    <section className="stack">
+      <h1 className="s-h1">Cardápio</h1>
+
+      <form className="inline" onSubmit={(e) => void addCat(e)}>
+        <Field label="Nova categoria">
+          <input value={catName} onChange={(e) => setCatName(e.target.value)} placeholder="Ex.: Bebidas, Petiscos" required />
+        </Field>
+        <button className="btn btn--primary" disabled={!catName.trim()}>Criar categoria</button>
+      </form>
+
+      {cats.length > 0 && (
+        <form className="grid3" onSubmit={(e) => void addProd(e)}>
+          <Field label="Categoria">
+            <select value={pForm.category_id} onChange={(e) => setPForm({ ...pForm, category_id: e.target.value })}>
+              {cats.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Nome do item">
+            <input value={pForm.name} onChange={(e) => setPForm({ ...pForm, name: e.target.value })} required />
+          </Field>
+          <Field label="Preço (R$)">
+            <input inputMode="decimal" placeholder="12,50" value={pForm.price} onChange={(e) => setPForm({ ...pForm, price: e.target.value })} required />
+          </Field>
+          <Field label="Descrição (opcional)">
+            <input value={pForm.description} onChange={(e) => setPForm({ ...pForm, description: e.target.value })} />
+          </Field>
+          <div className="field field--end">
+            <button className="btn btn--primary">Adicionar item</button>
+          </div>
+        </form>
+      )}
+
+      {cats.length === 0 ? (
+        <Empty>Crie uma categoria para começar a cadastrar itens.</Empty>
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th scope="col">Item</th>
+              <th scope="col">Categoria</th>
+              <th scope="col" className="num">Preço</th>
+              <th scope="col">Status</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {prods.map((p) => (
+              <tr key={p.id} className={p.active ? "" : "is-cancelled"}>
+                <td>
+                  <strong>{p.name}</strong>
+                  {p.description && <div className="muted small">{p.description}</div>}
+                </td>
+                <td>{cats.find((c) => c.id === p.category_id)?.name ?? "—"}</td>
+                <td className="num">{money(p.price_cents)}</td>
+                <td>{!p.active ? "Removido" : p.available ? "Disponível" : "Esgotado"}</td>
+                <td className="inline">
+                  {p.active && (
+                    <button className="btn btn--small" onClick={() => void toggleProd(p, { available: !p.available })}>
+                      {p.available ? "Marcar esgotado" : "Disponibilizar"}
+                    </button>
+                  )}
+                  <button className="btn btn--small btn--ghost" onClick={() => void toggleProd(p, { active: !p.active })}>
+                    {p.active ? "Excluir" : "Reativar"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
 
 export function AdminTables() {
   const toast = useToast();
@@ -19,6 +162,7 @@ export function AdminTables() {
   const [starting, setStarting] = useState<Table | null>(null);
   const [wizard, setWizard] = useState<Tag | null>(null);
 
+  
   const load = useCallback(() => api<Table[]>("/tables?include_inactive=true").then(setAll), []);
   useEffect(() => {
     load().catch((e) => toast(errorMessage(e), "error"));

@@ -6,6 +6,7 @@ import { Link, navigate } from "../../lib/router";
 import { AdminAudit, AdminMenu, AdminNotices, AdminSettings, AdminTables, AdminUsers } from "../admin/Admin";
 import { OpsBoard, TableDetail } from "./OpsBoard";
 import { StaffDataProvider, useStaff } from "./StaffData";
+import { AdminFloor } from "../admin/FloorEditor";
 
 export function StaffApp({ path }: { path: string }) {
   const [me, setMe] = useState<Me | null | undefined>(undefined);

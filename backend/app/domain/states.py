@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import enum
 
-from backend.app.core.errors import AppError
+from app.core.errors import AppError
 
 
 class TableStatus(str, enum.Enum):
@@ -18,17 +18,17 @@ class SessionStatus(str, enum.Enum):
 
 class RequestType(str, enum.Enum):
     CHAMAR_ATENDENTE = "CHAMAR_ATENDENTE"
+    NOVO_PEDIDO = "NOVO_PEDIDO"
     PEDIR_CONTA = "PEDIR_CONTA"
 
 
 class RequestStatus(str, enum.Enum):
     PENDENTE = "PENDENTE"
-    # Atendido (chamado), repassado à cozinha (pedido) ou conta finalizada (conta).
     CONCLUIDA = "CONCLUIDA"
     CANCELADA = "CANCELADA"
 
 
-ACTIVE_REQUEST_STATUSES = (RequestStatus.PENDENTE, RequestStatus.ASSUMIDA, RequestStatus.EM_ATENDIMENTO)
+ACTIVE_REQUEST_STATUSES = (RequestStatus.PENDENTE,)
 
 
 class TagStatus(str, enum.Enum):
@@ -47,17 +47,11 @@ UID_TAG_STATUSES = (TagStatus.GRAVADA, TagStatus.TRAVADA)
 
 TABLE_TRANSITIONS: dict[TableStatus, set[TableStatus]] = {
     TableStatus.LIVRE: {TableStatus.OCUPADA},
-    TableStatus.OCUPADA: {TableStatus.ENCERRAMENTO_SOLICITADO, TableStatus.LIVRE},
-    TableStatus.ENCERRAMENTO_SOLICITADO: {TableStatus.OCUPADA, TableStatus.LIVRE},
+    TableStatus.OCUPADA: {TableStatus.LIVRE},
 }
 
 REQUEST_TRANSITIONS: dict[RequestStatus, set[RequestStatus]] = {
-    RequestStatus.PENDENTE: {
-        RequestStatus.ASSUMIDA, RequestStatus.EM_ATENDIMENTO, RequestStatus.CONCLUIDA,
-        RequestStatus.CANCELADA,
-    },
-    RequestStatus.ASSUMIDA: {RequestStatus.EM_ATENDIMENTO, RequestStatus.CONCLUIDA, RequestStatus.CANCELADA},
-    RequestStatus.EM_ATENDIMENTO: {RequestStatus.CONCLUIDA, RequestStatus.CANCELADA},
+    RequestStatus.PENDENTE: {RequestStatus.CONCLUIDA, RequestStatus.CANCELADA},
     RequestStatus.CONCLUIDA: set(),
     RequestStatus.CANCELADA: set(),
 }

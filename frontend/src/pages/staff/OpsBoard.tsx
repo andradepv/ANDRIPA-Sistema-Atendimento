@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorMessage, newIdempotencyKey } from "../../api/http";
-import type { ServiceRequest, Table } from "../../api/types";
-import { Dialog, Empty, Field, useNow, useToast } from "../../components/ui";
-import { clock, elapsed, requestStatusLabel, requestTypeLabel, tableStatusLabel } from "../../lib/format";
-import { navigate } from "../../lib/router";
+import type { Page, ServiceRequest, SessionDetail, SessionHistory, Table } from "../../api/types";
+import { Dialog, Empty, useNow, useToast } from "../../components/ui";
+import { clock, dateTime, doneActionLabel, elapsed, money, requestStatusLabel, requestTitle, requestTypeLabel, tableStatusLabel } from "../../lib/format";
+import { Link } from "../../lib/router";
 import { useStaff } from "./StaffData";
 
 const rank = { PENDENTE: 0, ASSUMIDA: 1, EM_ATENDIMENTO: 2, CONCLUIDA: 3, CANCELADA: 3 } as const;
 
 export function sortRequests(list: ServiceRequest[]): ServiceRequest[] {
   return [...list].sort(
-    (a, b) => rank[a.status] - rank[b.status] || b.priority - a.priority || a.created_at.localeCompare(b.created_at),
+    (a, b) => rank[a.status] - rank[b.status] || (b.priority ?? 0) - (a.priority ?? 0) || a.created_at.localeCompare(b.created_at),
   );
 }
 
@@ -27,7 +27,7 @@ function TableTile({ t, onClick }: { t: Table; onClick: (t: Table) => void }) {
   );
 }
 
-/** Mesas na posição que ocupam no salão (planta ativa); mesas sem posição vêm logo abaixo. */
+/** Mesas na posição que ocupam no salão (planta ativa); mesas sem posição logo abaixo. */
 function FloorPlan({ tables, onSelect }: { tables: Table[]; onSelect: (t: Table) => void }) {
   const { layout } = useStaff();
   const placed = useMemo(() => {
@@ -83,6 +83,8 @@ export function OpsBoard() {
   const { tables, requests, layout } = useStaff();
   const [selected, setSelected] = useState<Table | null>(null);
   const [view, setView] = useState<"planta" | "lista">("planta");
+  const sorted = useMemo(() => sortRequests(requests), [requests]);
+
   useEffect(() => {
     try {
       if (localStorage.getItem(VIEW_KEY) === "lista") setView("lista");
@@ -90,6 +92,7 @@ export function OpsBoard() {
       /* sem armazenamento: mantém a planta */
     }
   }, []);
+
   const choose = (v: "planta" | "lista") => {
     setView(v);
     try {
@@ -98,7 +101,7 @@ export function OpsBoard() {
       /* ignora */
     }
   };
-  const current = selected ? tables.find((t) => t.id === selected.id) ?? selected : null;
+
   return (
     <div className="ops">
       <section className="ops__queue" aria-labelledby="q-h">
@@ -137,15 +140,9 @@ export function OpsBoard() {
           <TableList tables={tables} onSelect={setSelected} />
         )}
       </section>
+      {selected && <TableDetail tableId={selected.id} />}
     </div>
   );
-}
-
-function tileAlerts(t: Table): string {
-  const parts = [];
-  if (t.pending_calls) parts.push("chamou");
-  if (t.pending_orders) parts.push(`${t.pending_orders} pedido${t.pending_orders > 1 ? "s" : ""}`);
-  return parts.join(" · ");
 }
 
 /** O único botão que resolve a solicitação: atendido, repassado à cozinha ou conta finalizada. */
@@ -153,7 +150,11 @@ function DoneButton({ r, small = true }: { r: ServiceRequest; small?: boolean })
   const { can, resync } = useStaff();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  if (r.type === "PEDIR_CONTA" && !can("tables.close")) return <span className="muted small">O caixa finaliza a conta</span>;
+
+  if (r.type === "PEDIR_CONTA" && !can("tables.close")) {
+    return <span className="muted small">O caixa finaliza a conta</span>;
+  }
+
   const done = async () => {
     setBusy(true);
     try {
@@ -166,6 +167,7 @@ function DoneButton({ r, small = true }: { r: ServiceRequest; small?: boolean })
       setBusy(false);
     }
   };
+
   return (
     <button className={`btn btn--primary${small ? " btn--small" : ""}`} disabled={busy} onClick={() => void done()}>
       {doneActionLabel[r.type]}
@@ -177,8 +179,9 @@ function RequestCard({ r }: { r: ServiceRequest }) {
   const { me } = useStaff();
   const now = useNow();
   const tz = me.establishment.timezone;
+
   return (
-    <li className={`req req--${r.type}`}>
+    <li className={`req req--${r.type} rs-${r.status}`}>
       <div className="req__top">
         <Link to={`/painel/mesa/${r.table_id}`} className="req__table">
           Mesa {r.table_number}
@@ -190,46 +193,12 @@ function RequestCard({ r }: { r: ServiceRequest }) {
         <span className={elapsedClass(r.created_at, now)}>há {elapsed(r.created_at, now)}</span>
       </div>
       {r.order && <OrderLines r={r} />}
-      {r.note && !r.order && <p className="req__note">“{r.note}”</p>}
-      <div className="req__actions">
-        {r.status === "PENDENTE" && (
-          <button className="btn btn--primary btn--small" disabled={busy} onClick={() => void act("claim")}>
-            Assumir
-          </button>
-        )}
-        {r.status === "ASSUMIDA" && (mine || supervisor) && (
-          <button className="btn btn--small" disabled={busy} onClick={() => void act("start")}>
-            Iniciar atendimento
-          </button>
-        )}
-        {isBill ? (
-          can("tables.close") && (
-            <button className="btn btn--small" onClick={() => navigate(`/caixa?mesa=${r.table_number}`)}>
-              Fechar conta
-            </button>
-          )
-        ) : (
-          r.status !== "PENDENTE" &&
-          (mine || supervisor) && (
-            <button className="btn btn--small" disabled={busy} onClick={() => void act("complete")}>
-              Concluir
-            </button>
-          )
-        )}
-        {supervisor && (
-          <select
-            className="select-small"
-            aria-label="Prioridade"
-            value={r.priority}
-            onChange={(e) => void act("priority", { priority: Number(e.target.value) })}
-          >
-            <option value={0}>Normal</option>
-            <option value={1}>Prioridade 1</option>
-            <option value={2}>Prioridade 2</option>
-            <option value={3}>Urgente</option>
-          </select>
-        )}
-      </div>
+      {r.note && !r.order && <p className="req__note">{r.note}</p>}
+      {r.status === "PENDENTE" && (
+        <div className="req__actions">
+          <DoneButton r={r} />
+        </div>
+      )}
     </li>
   );
 }
@@ -242,10 +211,10 @@ function OrderLines({ r }: { r: ServiceRequest }) {
         <li key={i.id}>
           <span className="order__qty">{i.quantity}×</span> {i.product_name}
           {i.options.length > 0 && <span className="muted"> + {i.options.map((x) => x.name).join(", ")}</span>}
-          {i.notes && <span className="order__note">“{i.notes}”</span>}
+          {i.notes && <span className="order__note">{i.notes}</span>}
         </li>
       ))}
-      {r.order.note && <li className="order__note">“{r.order.note}”</li>}
+      {r.order.note && <li className="order__note">{r.order.note}</li>}
     </ul>
   );
 }
@@ -254,15 +223,6 @@ function elapsedClass(iso: string, now: number): string {
   const min = (now - new Date(iso).getTime()) / 60000;
   return min >= 5 ? "elapsed elapsed--late" : min >= 2 ? "elapsed elapsed--warn" : "elapsed";
 }
-
-function TableDialog({ table, onClose }: { table: Table | null; onClose: () => void }) {
-  const { me, can, requests } = useStaff();
-  const toast = useToast();
-  const [label, setLabel] = useState("");
-  const [secret, setSecret] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [keyState, setKey] = useState<string | null>(null);
-  const tz = me.establishment.timezone;
 
 export function TableDetail({ tableId }: { tableId: string }) {
   const { me, can, tables, requests } = useStaff();
@@ -274,8 +234,8 @@ export function TableDetail({ tableId }: { tableId: string }) {
   const tz = me.establishment.timezone;
   const sid = table?.session?.id ?? null;
 
-  // Recarrega o atendimento atual quando algo desta mesa muda em tempo real.
   const sig = `${table?.version}|` + requests.filter((r) => r.table_id === tableId).map((r) => r.id + r.version).join();
+
   useEffect(() => {
     if (!sid) {
       setCurrent(null);
@@ -321,14 +281,13 @@ export function TableDetail({ tableId }: { tableId: string }) {
       <header className="table-detail__head">
         <h1 className="s-h1">
           Mesa {table.number}
-          {table.name && <span className="muted"> · {table.name}</span>}
+          {table.name && <span className="muted"> — {table.name}</span>}
         </h1>
         <span className={`pill tt-${table.status}`}>{table.status === "LIVRE" ? "Livre" : table.bill_requested ? "Pediu a conta" : "Ocupada"}</span>
       </header>
-
       {table.status === "LIVRE" ? (
         <div className="stack">
-          <p className="muted">Mesa livre. Para liberar, use o botão abaixo ou “Liberar mesa” na página da mesa (QR Code) com o seu PIN.</p>
+          <p className="muted">Mesa livre. Para liberar, use o botão abaixo ou "Liberar mesa" na página da mesa (QR Code) com o seu PIN.</p>
           {can("tables.open") && (
             <button className="btn btn--primary" disabled={busy} onClick={() => void open()}>
               Liberar mesa
@@ -349,16 +308,13 @@ export function TableDetail({ tableId }: { tableId: string }) {
           )}
         </div>
       )}
-
       {can("history.view") && <TableHistory tableId={table.id} tz={tz} refreshKey={table.version} />}
-
       <p className="muted small">
         Página da mesa:{" "}
         <a href={table.public_url} target="_blank" rel="noreferrer">
           <code className="url">{table.public_url}</code>
         </a>
       </p>
-
       <Dialog open={closing} title={`Finalizar a conta da mesa ${table.number}?`} onClose={() => setClosing(false)}>
         <p>A mesa fica livre para os próximos clientes e os celulares desta mesa saem do atendimento.</p>
         <div className="dialog__actions">
@@ -390,7 +346,7 @@ function Timeline({ requests, tz, actions = false }: { requests: ServiceRequest[
             <span>Pedido às {clock(r.created_at, tz)}</span>
             {r.completed_at && r.status === "CONCLUIDA" && (
               <span>
-                · resolvido às {clock(r.completed_at, tz)}
+                — resolvido às {clock(r.completed_at, tz)}
                 {r.completed_by_name && ` por ${r.completed_by_name}`}
               </span>
             )}
@@ -417,6 +373,7 @@ function TableHistory({ tableId, tz, refreshKey }: { tableId: string; tz: string
     () => api<Page<SessionHistory>>(`/table-sessions?table_id=${tableId}&limit=10`).then(setPage),
     [tableId],
   );
+
   useEffect(() => {
     load().catch((e) => toast(errorMessage(e), "error"));
   }, [load, refreshKey, toast]);
@@ -435,8 +392,6 @@ function TableHistory({ tableId, tz, refreshKey }: { tableId: string; tz: string
     }
   };
 
-  const sReqs = table.session ? requests.filter((r) => r.session_id === table.session!.id) : [];
-
   return (
     <section className="stack">
       <h2 className="s-h2">Atendimentos anteriores</h2>
@@ -445,45 +400,17 @@ function TableHistory({ tableId, tz, refreshKey }: { tableId: string; tz: string
       ) : page.items.length === 0 ? (
         <Empty>Nenhum atendimento encerrado nesta mesa ainda.</Empty>
       ) : (
-        <div className="stack">
-          <dl className="facts">
-            <div>
-              <dt>Situação</dt>
-              <dd>{tableStatusLabel[table.status]}</dd>
-            </div>
-            <div>
-              <dt>Aberta às</dt>
-              <dd>
-                {table.session && clock(table.session.opened_at, tz)} por {table.session?.opened_by_name}
-              </dd>
-            </div>
-            {table.session?.label && (
-              <div>
-                <dt>Identificação</dt>
-                <dd>{table.session.label}</dd>
-              </div>
-            )}
-            {me.establishment.join_code_required && table.session?.join_code && (
-              <div>
-                <dt>Código para o cliente</dt>
-                <dd className="join-code">{table.session.join_code}</dd>
-              </div>
-            )}
-          </dl>
-          <p>{sReqs.length} chamado(s) aberto(s) nesta mesa.</p>
-          <div className="dialog__actions">
-            {table.status === "OCUPADA" && can("tables.request_close") && (
-              <button className="btn" onClick={() => void requestClose()}>
-                Registrar pedido de conta
+        <ul className="history">
+          {page.items.map((h) => (
+            <li key={h.id}>
+              <button className="history__row" aria-expanded={openId === h.id} onClick={() => void toggle(h.id)}>
+                <span>{dateTime(h.opened_at, tz)}</span>
+                <span className="muted">{h.requests_count} registro(s)</span>
               </button>
-            )}
-            {can("cash.view") && (
-              <button className="btn btn--primary" onClick={() => navigate(`/caixa?mesa=${table.number}`)}>
-                Ir para o caixa
-              </button>
-            )}
-          </div>
-        </div>
+              {openId === h.id && (detail ? <Timeline requests={detail.requests} tz={tz} /> : <p className="empty">Carregando…</p>)}
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );

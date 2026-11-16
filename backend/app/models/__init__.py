@@ -397,3 +397,29 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = _created()
 
     actor: Mapped[User | None] = relationship(lazy="joined")
+
+class Notice(Base):
+    __tablename__ = "notices"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    establishment_id: Mapped[uuid.UUID] = _est_fk()
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    message: Mapped[str | None] = mapped_column(String(500))
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _updated()
+
+
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    establishment_id: Mapped[uuid.UUID] = _est_fk()
+    endpoint: Mapped[str] = mapped_column(String(1000), nullable=False, unique=True)
+    p256dh: Mapped[str] = mapped_column(String(200), nullable=False)
+    auth: Mapped[str] = mapped_column(String(100), nullable=False)
+    consent_marketing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _created()

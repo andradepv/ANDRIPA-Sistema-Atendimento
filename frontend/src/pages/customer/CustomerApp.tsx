@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, errorMessage, newIdempotencyKey } from "../../api/http";
 import type { CustomerSession, MenuCategory, Notice, Product, PublicTable, RealtimeEvent, ServiceRequest } from "../../api/types";
 import { Dialog, useToast } from "../../components/ui";
@@ -146,6 +146,9 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
   const [cart, setCart] = useState<CartLine[]>([]);
   const [noticesVersion, setNoticesVersion] = useState(0);
 
+  const [tab, setTab] = useState<Tab>("mesa");
+  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
   const ended = useCallback(
     (e: unknown) => {
       if (e instanceof ApiError && e.status === 401) {
@@ -156,6 +159,18 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
     },
     [onEnded],
   );
+
+  const loadMenu = useCallback(async () => {
+    try {
+      setMenu(await api<MenuCategory[]>("/public/menu", { bearer: token }));
+    } catch (e) {
+      if (!ended(e)) toast(errorMessage(e), "error");
+    }
+  }, [token, ended, toast]);
+
+  useEffect(() => {
+    void loadMenu();
+  }, [loadMenu]);
 
   const refresh = useCallback(async () => {
     try {
@@ -185,7 +200,7 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
         else if (ev.type === "notices.updated") setNoticesVersion((v) => v + 1);
       },
     });
-  }, [token, refresh, onEnded]);
+  }, [token, refresh, loadMenu, onEnded]);
 
   if (!s) return <Splash text="Carregando…" />;
 
@@ -250,6 +265,7 @@ function HomeTab(props: {
   token: string;
   onChanged: () => Promise<void>;
   onEnded: (e: unknown) => boolean;
+  goMenu: () => void;
 }) {
   const { s } = props;
   const toast = useToast();

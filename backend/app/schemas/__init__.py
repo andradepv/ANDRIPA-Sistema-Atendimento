@@ -1,4 +1,5 @@
 """Contratos Pydantic de entrada e saída da API."""
+
 from __future__ import annotations
 
 import uuid
@@ -14,13 +15,16 @@ Str80 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, ma
 Str120 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
 OptStr280 = Annotated[str, StringConstraints(strip_whitespace=True, max_length=280)] | None
 OptStr1000 = Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] | None
-Username = Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=3, max_length=32,
-                                            pattern=r"^[a-z0-9._-]+$")]
+Username = Annotated[
+    str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=3, max_length=32, pattern=r"^[a-z0-9._-]+$")
+]
 Pin = Annotated[str, StringConstraints(pattern=r"^\d{4,8}$")]
-HttpsUrl = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500,
-                                            pattern=r"^https://[^\s<>\"']+$")] | None
-Email = Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, max_length=254,
-                                         pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
+HttpsUrl = (
+    Annotated[str, StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^https://[^\s<>\"']+$")] | None
+)
+Email = Annotated[
+    str, StringConstraints(strip_whitespace=True, to_lower=True, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+]
 
 
 class Out(BaseModel):
@@ -72,6 +76,7 @@ class EstablishmentPatch(In):
         if v is None:
             return v
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
         try:
             ZoneInfo(v)
         except (ZoneInfoNotFoundError, ValueError) as e:
@@ -136,6 +141,7 @@ class TableOut(Out):
     pending_calls: int = 0
     pending_orders: int = 0
     bill_requested: bool = False
+    tag: TagBrief | None = None
 
 
 class PublicOpenIn(In):
@@ -335,7 +341,6 @@ class PublicTableOut(BaseModel):
     table_name: str | None
     available: bool
     orders_enabled: bool
-    join_code_required: bool
 
 
 class JoinOut(BaseModel):
@@ -403,9 +408,6 @@ class PushBroadcastOut(BaseModel):
     sent: int
     failed: int
     removed: int
-    table_status: TableStatus
-    opened_at: datetime
-    requests: list[ServiceRequestOut]
 
 
 class NoticeCreatedOut(BaseModel):
