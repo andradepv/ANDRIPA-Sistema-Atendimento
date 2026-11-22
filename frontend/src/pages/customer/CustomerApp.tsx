@@ -202,7 +202,18 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
     });
   }, [token, refresh, loadMenu, onEnded]);
 
+  const switchTab = (next: Tab) => {
+    setTab(next);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   if (!s) return <Splash text="Carregando…" />;
+
+  const navItems: { key: Tab; label: string; badge?: number }[] = [
+    { key: "mesa", label: "Mesa" },
+    { key: "cardapio", label: "Cardápio", badge: cartCount > 0 ? cartCount : undefined },
+    { key: "novidades", label: "Novidades" },
+  ];
 
   return (
     <div className="c-shell">
@@ -213,14 +224,31 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
             <p className="c-est">{s.establishment_name}</p>
             <h1 className="c-table">
               Mesa {s.table_number}
-              {s.table_name ? <span className="c-table__name"> {s.table_name}</span> : null}
+              {s.table_name ? <span className="c-table__name"> · {s.table_name}</span> : null}
             </h1>
           </div>
+
+          <nav className="c-nav" aria-label="Seções">
+            {navItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className="c-nav__btn"
+                aria-current={tab === item.key ? "page" : undefined}
+                onClick={() => switchTab(item.key)}
+              >
+                <span>{item.label}</span>
+                {item.badge !== undefined && <span className="c-nav__badge">{item.badge}</span>}
+              </button>
+            ))}
+          </nav>
+
           {conn !== "online" && <span className="c-offline">{conn === "connecting" ? "Conectando…" : "Sem conexão"}</span>}
         </div>
       </header>
+
       <main className="c-main">
-        {tab === "mesa" && <HomeTab s={s} token={token} onChanged={refresh} onEnded={ended} goMenu={() => setTab("cardapio")} />}
+        {tab === "mesa" && <HomeTab s={s} token={token} onChanged={refresh} onEnded={ended} goMenu={() => switchTab("cardapio")} />}
         {tab === "cardapio" && (
           <MenuTab
             s={s}
@@ -230,7 +258,7 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
             token={token}
             onSent={() => {
               setCart([]);
-              setTab("mesa");
+              switchTab("mesa");
               void refresh();
             }}
             onEnded={ended}
@@ -238,20 +266,6 @@ function ActiveSession({ token, onEnded }: { token: string; onEnded: () => void 
         )}
         {tab === "novidades" && <NewsTab s={s} token={token} noticesVersion={noticesVersion} onEnded={ended} />}
       </main>
-
-      <nav className="c-nav" aria-label="Seções">
-        {(
-          [
-            ["mesa", "Mesa"],
-            ["cardapio", cartCount ? `Cardápio (${cartCount})` : "Cardápio"],
-            ["novidades", "Novidades"],
-          ] as [Tab, string][]
-        ).map(([k, label]) => (
-          <button key={k} className="c-nav__btn" aria-current={tab === k ? "page" : undefined} onClick={() => setTab(k)}>
-            {label}
-          </button>
-        ))}
-      </nav>
     </div>
   );
 }
