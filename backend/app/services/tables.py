@@ -17,7 +17,7 @@ from app.models import CustomerToken, DiningTable, ServiceRequest, TableSession,
 from app.schemas import SessionDetailOut, SessionHistoryOut, TableCreate, TableOut, TablePatch
 from app.services import layouts as layout_svc
 from app.services.audit import audit
-from app.services.events import CUSTOMERS, SESSION, STAFF, emit
+from app.services.events import SESSION, STAFF, emit
 from app.services.serializers import request_out, table_out
 
 
@@ -112,14 +112,16 @@ async def rotate_code(db: AsyncSession, ctx: StaffCtx, table_id: uuid.UUID) -> T
 
 
 # ---------- liberar mesa ----------
+# ---------- liberar mesa ----------
 async def _open(
     db: AsyncSession, est_id: uuid.UUID, table_id: uuid.UUID, user: User, ip: str | None, via: str
 ) -> TableOut:
     t = await get_table(db, est_id, table_id, lock=True)
     if not t.active:
         raise conflict("table_inactive", "Mesa desativada.")
-    if t.status != TableStatus.LIVRE:
+    if t.status not in (TableStatus.LIVRE, TableStatus.AGUARDANDO_LIBERACAO):
         raise conflict("table_not_free", f"A mesa {t.number} já está liberada.")
+
     s = TableSession(
         establishment_id=t.establishment_id, table_id=t.id, status=SessionStatus.OPEN, opened_by_id=user.id
     )
@@ -128,9 +130,50 @@ async def _open(
         await db.flush()
     except IntegrityError as e:  # índice único parcial: proteção final contra sessão dupla
         raise conflict("table_not_free", f"A mesa {t.number} já está liberada.") from e
+
+    # Conclui automaticamente qualquer solicitação pendente de liberação desta mesa
+    unlock_reqs = (
+        (
+            await db.execute(
+                select(ServiceRequest)
+                .where(
+                    ServiceRequest.table_id == t.id,
+                    ServiceRequest.type == RequestType.LIBERAR_MESA,
+                    ServiceRequest.status == RequestStatus.PENDENTE,
+                )
+                .with_for_update(of=ServiceRequest)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .unique()
+        .scalars()
+        .all()
+    )
+    ts = now()
+    for r in unlock_reqs:
+        r.session_id = s.id
+        r.status = RequestStatus.CONCLUIDA
+        r.completed_at = ts
+        r.completed_by_id = user.id
+        r.version += 1
+
     t.status = TableStatus.OCUPADA
     t.current_session_id = s.id
     t.version += 1
+    await db.flush()
+
+    for r in unlock_reqs:
+        r2 = (
+            (
+                await db.execute(
+                    select(ServiceRequest).where(ServiceRequest.id == r.id).execution_options(populate_existing=True)
+                )
+            )
+            .unique()
+            .scalar_one()
+        )
+        emit(db, t.establishment_id, "request.updated", {"request": request_out(r2).model_dump(mode="json")})
+
     audit(
         db,
         establishment_id=est_id,
@@ -166,7 +209,7 @@ async def find_user_by_pin(
 
 async def public_open(db: AsyncSession, t: DiningTable, pin: str, ip: str) -> TableOut:
     """Liberação pela página da mesa: basta o PIN de alguém da equipe."""
-    if t.status != TableStatus.LIVRE:
+    if t.status not in (TableStatus.LIVRE, TableStatus.AGUARDANDO_LIBERACAO):
         raise conflict("table_not_free", f"A mesa {t.number} já está liberada.")
     await hit(f"pinopen:ip:{ip}", 10, 600)
     await hit(f"pinopen:table:{t.id}", 10, 600)

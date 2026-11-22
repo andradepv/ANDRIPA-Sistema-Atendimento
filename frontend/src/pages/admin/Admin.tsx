@@ -312,7 +312,7 @@ function TableRow({
       <td>
         <strong>{t.number}</strong> {t.name}
       </td>
-      <td>{t.active ? tableStatusLabel[t.status] : "Desativada"}</td>
+      <td>{t.active ? (t.status_label ?? tableStatusLabel[t.status]) : "Desativada"}</td>
       <td>
         <TagBadge status={status} />
         {live?.status === "FALHA" && live.error && <div className="muted small">{live.error}</div>}
@@ -337,7 +337,7 @@ function TableRow({
         </button>
         <button
           className="btn btn--small btn--ghost"
-          disabled={t.status !== "LIVRE"}
+          disabled={t.status === "OCUPADA"}
           onClick={() => {
             if (confirm(`Gerar novo endereço para a mesa ${t.number}? O QR Code e a etiqueta antigos deixam de funcionar.`))
               void api(`/tables/${t.id}/rotate-code`, { body: {} }).then(onChanged).catch((e) => toast(errorMessage(e), "error"));
@@ -345,7 +345,7 @@ function TableRow({
         >
           Gerar novo endereço
         </button>
-        <button className="btn btn--small btn--ghost" disabled={t.status !== "LIVRE"} onClick={() => void onPatch(t, { active: !t.active })}>
+        <button className="btn btn--small btn--ghost" disabled={t.status === "OCUPADA"} onClick={() => void onPatch(t, { active: !t.active })}>
           {t.active ? "Desativar" : "Reativar"}
         </button>
       </td>

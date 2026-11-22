@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.domain.states import RequestStatus, RequestType, TagStatus
+from app.domain.states import RequestStatus, RequestType, TableStatus, TagStatus
 from app.models import DiningTable, Order, ServiceRequest, TableSession, TableTag, User
 from app.schemas import (
     OrderItemOut,
@@ -58,8 +58,11 @@ def request_out(r: ServiceRequest) -> ServiceRequestOut:
 
 async def tables_out(db: AsyncSession, tables: list[DiningTable], *, include_join_code: bool = True) -> list[TableOut]:
     session_ids = [t.current_session_id for t in tables if t.current_session_id]
+    table_ids = [t.id for t in tables]
     sessions: dict[uuid.UUID, TableSession] = {}
     pending: dict[tuple[uuid.UUID, RequestType], int] = {}
+    unlock_pending_tables: set[uuid.UUID] = set()
+
     if session_ids:
         rows = (await db.execute(select(TableSession).where(TableSession.id.in_(session_ids)))).unique().scalars()
         sessions = {s.id: s for s in rows}
@@ -73,16 +76,32 @@ async def tables_out(db: AsyncSession, tables: list[DiningTable], *, include_joi
                 .group_by(ServiceRequest.session_id, ServiceRequest.type)
             )
         ).all():
-            pending[(sid, rtype)] = n
+            if sid is not None:
+                pending[(sid, rtype)] = n
+
+    if table_ids:
+        unlock_rows = (
+            (
+                await db.execute(
+                    select(ServiceRequest.table_id).where(
+                        ServiceRequest.table_id.in_(table_ids),
+                        ServiceRequest.type == RequestType.LIBERAR_MESA,
+                        ServiceRequest.status == RequestStatus.PENDENTE,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        unlock_pending_tables = set(unlock_rows)
 
     tags: dict[uuid.UUID, TableTag] = {}
     if tables:
-        # Situação mais recente da etiqueta de cada mesa (tentativas substituídas não contam).
         trows = (
             (
                 await db.execute(
                     select(TableTag)
-                    .where(TableTag.table_id.in_([t.id for t in tables]), TableTag.status != TagStatus.SUBSTITUIDA)
+                    .where(TableTag.table_id.in_(table_ids), TableTag.status != TagStatus.SUBSTITUIDA)
                     .distinct(TableTag.table_id)
                     .order_by(TableTag.table_id, TableTag.created_at.desc())
                 )
@@ -96,12 +115,14 @@ async def tables_out(db: AsyncSession, tables: list[DiningTable], *, include_joi
     for t in tables:
         g = tags.get(t.id)
         s = sessions.get(t.current_session_id) if t.current_session_id else None
+        awaiting = t.status == TableStatus.AGUARDANDO_LIBERACAO or t.id in unlock_pending_tables
         out.append(
             TableOut(
                 id=t.id,
                 number=t.number,
                 name=t.name,
                 status=t.status,
+                status_label="Mesa aguardando ser liberada" if awaiting else None,
                 active=t.active,
                 public_url=public_url(t),
                 version=t.version,
@@ -115,7 +136,10 @@ async def tables_out(db: AsyncSession, tables: list[DiningTable], *, include_joi
                 pending_calls=pending.get((s.id, RequestType.CHAMAR_ATENDENTE), 0) if s else 0,
                 pending_orders=pending.get((s.id, RequestType.NOVO_PEDIDO), 0) if s else 0,
                 bill_requested=bool(pending.get((s.id, RequestType.PEDIR_CONTA), 0)) if s else False,
-                tag=TagBrief(id=g.id, status=g.status, uid=g.uid, error=g.error, updated_at=g.updated_at) if g else None,
+                unlock_requested=awaiting,
+                tag=TagBrief(id=g.id, status=g.status, uid=g.uid, error=g.error, updated_at=g.updated_at)
+                if g
+                else None,
             )
         )
     return out

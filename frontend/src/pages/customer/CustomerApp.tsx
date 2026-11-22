@@ -111,12 +111,19 @@ export function Splash(props: {
 
 /** Mesa ainda não liberada pela equipe. */
 export function NotOpen({ table, onBack, onRetry }: { table: PublicTable; onBack: () => void; onRetry: () => void }) {
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      onRetry();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [onRetry]);
+
   return (
     <Splash
-      title={`Mesa ${table.table_number}`}
-      text="Esta mesa ainda não foi liberada. Peça a um atendente para liberar a mesa e tente de novo."
+      title="Aguardando Atendente"
+      text={`Chamamos um atendente para liberar a Mesa ${table.table_number}. Assim que ele liberar, você entrará automaticamente.`}
       establishment={table.establishment_name}
-      action={{ label: "Tentar de novo", onClick: onRetry }}
+      action={{ label: "Verificar agora", onClick: onRetry }}
       secondary={{ label: "Voltar", onClick: onBack }}
     />
   );

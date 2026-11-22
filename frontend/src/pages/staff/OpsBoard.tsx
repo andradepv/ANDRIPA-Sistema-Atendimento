@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorMessage, newIdempotencyKey } from "../../api/http";
 import type { Page, ServiceRequest, SessionDetail, SessionHistory, Table } from "../../api/types";
 import { Dialog, Empty, useNow, useToast } from "../../components/ui";
-import { clock, dateTime, doneActionLabel, elapsed, money, requestStatusLabel, requestTitle, requestTypeLabel, tableStatusLabel } from "../../lib/format";
+import { clock, dateTime, elapsed, getDoneActionLabel, money, requestStatusLabel, requestTitle, requestTypeLabel, tableStatusLabel } from "../../lib/format";
 import { Link } from "../../lib/router";
 import { useStaff } from "./StaffData";
 
@@ -145,7 +145,7 @@ export function OpsBoard() {
   );
 }
 
-/** O único botão que resolve a solicitação: atendido, repassado à cozinha ou conta finalizada. */
+/** Botão que avança ou resolve a solicitação: atendido, repassado à cozinha -> entregue, ou conta finalizada. */
 function DoneButton({ r, small = true }: { r: ServiceRequest; small?: boolean }) {
   const { can, resync } = useStaff();
   const toast = useToast();
@@ -160,6 +160,9 @@ function DoneButton({ r, small = true }: { r: ServiceRequest; small?: boolean })
     try {
       await api(`/service-requests/${r.id}/complete`, { body: {} });
       if (r.type === "PEDIR_CONTA") toast(`Conta da mesa ${r.table_number} finalizada. Mesa liberada.`, "ok");
+      else if (r.type === "NOVO_PEDIDO" && r.status === "PENDENTE") toast(`Pedido da mesa ${r.table_number} enviado para a cozinha.`, "ok");
+      else if (r.type === "NOVO_PEDIDO" && r.status === "EM_ATENDIMENTO") toast(`Pedido da mesa ${r.table_number} marcado como entregue.`, "ok");
+      else if (r.type === "LIBERAR_MESA") toast(`Mesa ${r.table_number} liberada.`, "ok");
     } catch (e) {
       toast(errorMessage(e), "error");
       void resync();
@@ -170,7 +173,7 @@ function DoneButton({ r, small = true }: { r: ServiceRequest; small?: boolean })
 
   return (
     <button className={`btn btn--primary${small ? " btn--small" : ""}`} disabled={busy} onClick={() => void done()}>
-      {doneActionLabel[r.type]}
+      {getDoneActionLabel(r)}
     </button>
   );
 }
@@ -194,7 +197,7 @@ function RequestCard({ r }: { r: ServiceRequest }) {
       </div>
       {r.order && <OrderLines r={r} />}
       {r.note && !r.order && <p className="req__note">{r.note}</p>}
-      {r.status === "PENDENTE" && (
+      {(r.status === "PENDENTE" || r.status === "EM_ATENDIMENTO") && (
         <div className="req__actions">
           <DoneButton r={r} />
         </div>
@@ -283,11 +286,23 @@ export function TableDetail({ tableId }: { tableId: string }) {
           Mesa {table.number}
           {table.name && <span className="muted"> — {table.name}</span>}
         </h1>
-        <span className={`pill tt-${table.status}`}>{table.status === "LIVRE" ? "Livre" : table.bill_requested ? "Pediu a conta" : "Ocupada"}</span>
+        <span className={`pill tt-${table.status}`}>
+          {table.status === "AGUARDANDO_LIBERACAO"
+            ? "Mesa aguardando ser liberada"
+            : table.status === "LIVRE"
+              ? "Livre"
+              : table.bill_requested
+                ? "Pediu a conta"
+                : "Ocupada"}
+        </span>
       </header>
-      {table.status === "LIVRE" ? (
+      {table.status !== "OCUPADA" ? (
         <div className="stack">
-          <p className="muted">Mesa livre. Para liberar, use o botão abaixo ou "Liberar mesa" na página da mesa (QR Code) com o seu PIN.</p>
+          <p className="muted">
+            {table.status === "AGUARDANDO_LIBERACAO"
+              ? 'Cliente aguardando atendimento na mesa. Aproxime o celular da etiqueta NFC/QR e toque em "Liberar mesa" com seu PIN, ou libere pelo botão abaixo.'
+              : 'Mesa livre. Para liberar, use o botão abaixo ou "Liberar mesa" na página da mesa (QR Code) com o seu PIN.'}
+          </p>
           {can("tables.open") && (
             <button className="btn btn--primary" disabled={busy} onClick={() => void open()}>
               Liberar mesa
@@ -352,7 +367,7 @@ function Timeline({ requests, tz, actions = false }: { requests: ServiceRequest[
             )}
           </div>
           {r.order && <OrderLines r={r} />}
-          {actions && r.status === "PENDENTE" && (
+          {actions && (r.status === "PENDENTE" || r.status === "EM_ATENDIMENTO") && (
             <div className="req__actions">
               <DoneButton r={r} />
             </div>

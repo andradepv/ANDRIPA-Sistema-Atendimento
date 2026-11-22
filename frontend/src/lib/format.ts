@@ -21,33 +21,60 @@ export function elapsed(iso: string, now: number): string {
   return `${h} h ${m % 60} min`;
 }
 
-export const tableStatusLabel: Record<TableStatus, string> = { LIVRE: "Livre", OCUPADA: "Ocupada" };
+export const tableStatusLabel: Record<TableStatus, string> = {
+  LIVRE: "Livre",
+  AGUARDANDO_LIBERACAO: "Mesa aguardando ser liberada",
+  OCUPADA: "Ocupada",
+};
 
-/** Como a equipe vê cada solicitação. */
 export const requestTypeLabel: Record<RequestType, string> = {
-  CHAMAR_ATENDENTE: "Chamou o atendente",
-  NOVO_PEDIDO: "Pedido do cardápio",
-  PEDIR_CONTA: "Pediu a conta",
+  LIBERAR_MESA: "Liberar mesa",
+  CHAMAR_ATENDENTE: "Chamar atendente",
+  NOVO_PEDIDO: "Novo pedido",
+  PEDIR_CONTA: "Pedir a conta",
 };
 
-/** O botão único que resolve cada tipo de solicitação. */
-export const doneActionLabel: Record<RequestType, string> = {
-  CHAMAR_ATENDENTE: "Atendido",
-  NOVO_PEDIDO: "Repassado à cozinha",
-  PEDIR_CONTA: "Conta finalizada",
-};
+export function getDoneActionLabel(r: Pick<ServiceRequest, "type" | "status">): string {
+  if (r.type === "NOVO_PEDIDO") {
+    return r.status === "EM_ATENDIMENTO" ? "Marcar como entregue" : "Repassado à cozinha";
+  }
+  if (r.type === "LIBERAR_MESA") return "Liberar mesa";
+  if (r.type === "PEDIR_CONTA") return "Conta finalizada";
+  return "Atendido";
+}
 
 const statusByType: Record<RequestType, Record<RequestStatus, string>> = {
-  CHAMAR_ATENDENTE: { PENDENTE: "Aguardando", CONCLUIDA: "Atendido", CANCELADA: "Cancelado" },
-  NOVO_PEDIDO: { PENDENTE: "Enviado", CONCLUIDA: "Repassado à cozinha", CANCELADA: "Não repassado" },
-  PEDIR_CONTA: { PENDENTE: "Solicitada", CONCLUIDA: "Conta finalizada", CANCELADA: "Cancelada" },
+  LIBERAR_MESA: {
+    PENDENTE: "Aguardando liberação",
+    EM_ATENDIMENTO: "Liberando",
+    CONCLUIDA: "Liberada",
+    CANCELADA: "Cancelada",
+  },
+  CHAMAR_ATENDENTE: {
+    PENDENTE: "Aguardando",
+    EM_ATENDIMENTO: "Em atendimento",
+    CONCLUIDA: "Atendido",
+    CANCELADA: "Cancelado",
+  },
+  NOVO_PEDIDO: {
+    PENDENTE: "Enviado",
+    EM_ATENDIMENTO: "Na cozinha",
+    CONCLUIDA: "Entregue",
+    CANCELADA: "Não repassado",
+  },
+  PEDIR_CONTA: {
+    PENDENTE: "Solicitada",
+    EM_ATENDIMENTO: "Fechando",
+    CONCLUIDA: "Conta finalizada",
+    CANCELADA: "Cancelada",
+  },
 };
 
 export const requestStatusLabel = (r: Pick<ServiceRequest, "type" | "status">) => statusByType[r.type][r.status];
 
-/** Título curto da solicitação na linha do tempo do cliente e do histórico. */
 export function requestTitle(r: ServiceRequest): string {
   if (r.type === "NOVO_PEDIDO") return r.order ? `Pedido nº ${r.order.number}` : "Pedido";
+  if (r.type === "LIBERAR_MESA") return "Liberação da mesa";
   return r.type === "PEDIR_CONTA" ? "Conta" : "Chamado";
 }
 

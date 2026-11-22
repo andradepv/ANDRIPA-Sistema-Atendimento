@@ -50,6 +50,11 @@ async def open_with_pin(code: str, data: PublicOpenIn, request: Request,
     await db.commit()
     return await svc.public_table(db, code)
 
+@router.post("/tables/{code}/request-open", response_model=PublicTableOut)
+async def request_open(code: str, request: Request, db: AsyncSession = Depends(get_db)) -> PublicTableOut:
+    """Cliente tocou em 'Cliente' na página da mesa: notifica a equipe para liberar a mesa."""
+    await hit(f"reqopen:ip:{client_ip(request)}", 30, 60)
+    return await svc.request_open(db, code, client_ip(request))
 
 @router.post("/tables/{code}/join", response_model=JoinOut)
 async def join(code: str, request: Request, db: AsyncSession = Depends(get_db)) -> JoinOut:

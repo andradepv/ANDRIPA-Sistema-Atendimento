@@ -1,9 +1,9 @@
 // Espelho dos contratos Pydantic do backend (app/schemas). Mantenha sincronizado com o OpenAPI.
 
 export type Role = "ADMIN" | "CAIXA" | "ATENDENTE";
-export type TableStatus = "LIVRE" | "OCUPADA";
-export type RequestType = "CHAMAR_ATENDENTE" | "NOVO_PEDIDO" | "PEDIR_CONTA";
-export type RequestStatus = "PENDENTE" | "CONCLUIDA" | "CANCELADA";
+export type TableStatus = "LIVRE" | "AGUARDANDO_LIBERACAO" | "OCUPADA";
+export type RequestType = "LIBERAR_MESA" | "CHAMAR_ATENDENTE" | "NOVO_PEDIDO" | "PEDIR_CONTA";
+export type RequestStatus = "PENDENTE" | "EM_ATENDIMENTO" | "CONCLUIDA" | "CANCELADA";
 
 export interface User {
   id: string;
@@ -92,13 +92,17 @@ export interface Table {
   number: number;
   name: string | null;
   status: TableStatus;
+  status_label?: string | null;
   active: boolean;
   public_url: string;
   version: number;
   session: SessionBrief | null;
+  pending_requests: number;
   pending_calls: number;
   pending_orders: number;
   bill_requested: boolean;
+  unlock_requested?: boolean;
+  tag: TagBrief | null;
 }
 
 export interface OrderItem {
@@ -123,7 +127,7 @@ export interface Order {
 /** Chamado, pedido ou pedido de conta: só é feito e depois resolvido. */
 export interface ServiceRequest {
   id: string;
-  session_id: string;
+  session_id: string | null;
   table_id: string;
   table_number: number;
   table_name: string | null;
@@ -214,9 +218,10 @@ export interface PublicTable {
   timezone: string;
   table_number: number;
   table_name: string | null;
+  status: TableStatus;
   available: boolean;
+  awaiting_release: boolean;
   orders_enabled: boolean;
-  join_code_required: boolean;
 }
 
 export interface CustomerSession {

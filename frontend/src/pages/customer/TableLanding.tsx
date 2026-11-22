@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, errorMessage } from "../../api/http";
 import type { PublicTable } from "../../api/types";
-import { Dialog } from "../../components/ui";
+import { Dialog, useToast } from "../../components/ui";
 import { navigate } from "../../lib/router";
 import { NotOpen, Splash } from "./CustomerApp";
 
@@ -33,21 +33,40 @@ export function TableLanding({ code }: { code: string }) {
     void load();
   }, [load]);
 
-  const goCustomer = async () => {
+  const toast = useToast();
+
+  const checkAndEnter = useCallback(async (requestRelease: boolean) => {
     setBusy(true);
-    const t = await load(); // confere na hora: a mesa pode ter sido liberada agora há pouco
+    const t = await load();
+    if (!t) {
+      setBusy(false);
+      return;
+    }
+    if (t.available) {
+      setBusy(false);
+      navigate(`/m/${code}/cliente`);
+      return;
+    }
+    if (requestRelease && !t.awaiting_release) {
+      try {
+        const updated = await api<PublicTable>(`/public/tables/${code}/request-open`, { body: {} });
+        setTable(updated);
+      } catch (err) {
+        toast(errorMessage(err), "error");
+        setBusy(false);
+        return;
+      }
+    }
     setBusy(false);
-    if (!t) return;
-    if (t.available) navigate(`/m/${code}/cliente`);
-    else setNotOpen(true);
-  };
+    setNotOpen(true);
+  }, [code, load, toast]);
 
   if (error === "notfound")
     return <Splash title="Mesa não encontrada" text="Leia o QR Code de novo ou aproxime o celular da etiqueta da mesa." />;
   if (error === "offline")
     return <Splash title="Sem conexão" text="Não foi possível falar com o servidor." action={{ label: "Tentar de novo", onClick: () => void load() }} />;
   if (!table) return <Splash text="Abrindo a mesa…" />;
-  if (notOpen) return <NotOpen table={table} onBack={() => setNotOpen(false)} onRetry={() => void goCustomer()} />;
+  if (notOpen) return <NotOpen table={table} onBack={() => setNotOpen(false)} onRetry={() => void checkAndEnter(false)} />;
 
   return (
     <main className="c-shell c-center landing">
@@ -62,7 +81,7 @@ export function TableLanding({ code }: { code: string }) {
           Mesa liberada! Os clientes já podem usar o atendimento.
         </p>
       )}
-      <button className="big-btn big-btn--call landing__main" onClick={() => void goCustomer()} disabled={busy}>
+      <button className="big-btn big-btn--call landing__main" onClick={() => void checkAndEnter(true)} disabled={busy}>
         <span className="big-btn__title">Cliente</span>
         <span className="big-btn__sub">Chamar atendente, ver o cardápio e pedir a conta</span>
       </button>

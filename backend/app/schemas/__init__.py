@@ -134,6 +134,7 @@ class TableOut(Out):
     number: int
     name: str | None
     status: TableStatus
+    status_label: str | None = None
     active: bool
     public_url: str
     version: int
@@ -141,6 +142,7 @@ class TableOut(Out):
     pending_calls: int = 0
     pending_orders: int = 0
     bill_requested: bool = False
+    unlock_requested: bool = False
     tag: TagBrief | None = None
 
 
@@ -282,7 +284,7 @@ class OrderOut(Out):
 # ---------- service requests (chamados, pedidos e conta) ----------
 class ServiceRequestOut(Out):
     id: uuid.UUID
-    session_id: uuid.UUID
+    session_id: uuid.UUID | None
     table_id: uuid.UUID
     table_number: int
     table_name: str | None
@@ -339,7 +341,9 @@ class PublicTableOut(BaseModel):
     timezone: str
     table_number: int
     table_name: str | None
+    status: TableStatus
     available: bool
+    awaiting_release: bool
     orders_enabled: bool
 
 

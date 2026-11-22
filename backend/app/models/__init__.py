@@ -116,8 +116,9 @@ class DiningTable(Base):
     number: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str | None] = mapped_column(String(80))
     public_code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
-    status: Mapped[TableStatus] = mapped_column(_enum(TableStatus, "table_status"), nullable=False,
-                                                default=TableStatus.LIVRE)
+    status: Mapped[TableStatus] = mapped_column(
+        _enum(TableStatus, "table_status"), nullable=False, default=TableStatus.LIVRE
+    )
     current_session_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("table_sessions.id", use_alter=True, name="fk_tables_current_session"), nullable=True
     )
@@ -164,21 +165,38 @@ class ServiceRequest(Base):
     __tablename__ = "service_requests"
     __table_args__ = (
         # Um chamado pendente por tipo e sessão (pedidos geram uma solicitação por pedido).
-        Index("uq_active_request_per_type", "session_id", "type", unique=True,
-              postgresql_where=text("status = 'PENDENTE' AND type <> 'NOVO_PEDIDO'")),
+        Index(
+            "uq_active_request_per_type",
+            "session_id",
+            "type",
+            unique=True,
+            postgresql_where=text("status IN ('PENDENTE', 'EM_ATENDIMENTO') AND session_id IS NOT NULL AND type <> 'NOVO_PEDIDO'"),
+        ),
+        # Apenas um pedido de liberação pendente por mesa antes da sessão abrir.
+        Index(
+            "uq_active_unlock_per_table",
+            "table_id",
+            unique=True,
+            postgresql_where=text("status = 'PENDENTE' AND type = 'LIBERAR_MESA'"),
+        ),
         Index("ix_service_requests_est_status_created", "establishment_id", "status", "created_at"),
     )
     id: Mapped[uuid.UUID] = _uuid_pk()
     establishment_id: Mapped[uuid.UUID] = _est_fk()
-    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("table_sessions.id", ondelete="CASCADE"),
-                                                  nullable=False, index=True)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("table_sessions.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     table_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tables.id"), nullable=False)
     type: Mapped[RequestType] = mapped_column(_enum(RequestType, "request_type"), nullable=False)
-    status: Mapped[RequestStatus] = mapped_column(_enum(RequestStatus, "request_status"), nullable=False,
-                                                  default=RequestStatus.PENDENTE)
+    status: Mapped[RequestStatus] = mapped_column(
+        _enum(RequestStatus, "request_status"), nullable=False, default=RequestStatus.PENDENTE
+    )
     note: Mapped[str | None] = mapped_column(String(280))
-    order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("orders.id", use_alter=True,
-                                                                  name="fk_service_requests_order"))
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("orders.id", use_alter=True, name="fk_service_requests_order")
+    )
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = _updated()
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
