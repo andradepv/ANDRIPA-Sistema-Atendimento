@@ -90,7 +90,6 @@ jobs:
       ANDRIPA_PUBLIC_BASE_URL: http://localhost:8000
       ANDRIPA_ALLOWED_ORIGINS: http://localhost:8000
       ANDRIPA_FRONTEND_DIST_DIR: ${{ github.workspace }}/frontend/dist
-      ANDRIPA_DEV_PASSWORD: demo-senha-123
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

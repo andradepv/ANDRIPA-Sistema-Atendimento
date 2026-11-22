@@ -1,18 +1,21 @@
 // Estado operacional compartilhado pelos painéis: snapshot REST + eventos em tempo real.
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../../api/http";
-import type { Me, Order, Page, RealtimeEvent, ServiceRequest, Table } from "../../api/types";
+import type { Layout, Me, Page, RealtimeEvent, ServiceRequest, Table, Tag } from "../../api/types";
 import { openSocket, upsertVersioned, type SocketStatus } from "../../realtime/socket";
 
 interface StaffData {
   me: Me;
   tables: Table[];
+  /** Solicitações aguardando resposta (chamados, pedidos e contas). */
   requests: ServiceRequest[];
-  orders: Order[];
+  /** Planta ativa do salão (null enquanto carrega). */
+  layout: Layout | null;
+  /** Gravações de etiqueta NFC recentes/em andamento (só administradores recebem a lista). */
+  tags: Tag[];
   conn: SocketStatus;
   resync: () => Promise<void>;
   can: (perm: string) => boolean;
-  menuVersion: number;
 }
 
 const Ctx = createContext<StaffData | null>(null);
@@ -23,7 +26,6 @@ export const useStaff = () => {
 };
 
 const ACTIVE = new Set(["PENDENTE", "ASSUMIDA", "EM_ATENDIMENTO"]);
-const PENDING_ORDERS = new Set(["RECEBIDO", "EM_PREPARO", "PRONTO"]);
 
 function beep(): void {
   try {
@@ -46,22 +48,24 @@ function beep(): void {
 export function StaffDataProvider({ me, children, onSessionEnded }: { me: Me; children: ReactNode; onSessionEnded: () => void }) {
   const [tables, setTables] = useState<Table[]>([]);
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [layout, setLayout] = useState<Layout | null>(null);
+  const [tags, setTags] = useState<Tag[]>([]);
   const [conn, setConn] = useState<SocketStatus>("connecting");
-  const [menuVersion, setMenuVersion] = useState(0);
   const known = useRef(new Set<string>());
 
   const resync = useCallback(async () => {
-    const [t, r, o] = await Promise.all([
+    const [t, r, l, g] = await Promise.all([
       api<Table[]>("/tables"),
       api<Page<ServiceRequest>>("/service-requests?active=true&limit=500"),
-      api<Page<Order>>("/orders?active=true&limit=500"),
+      api<Layout>("/layouts/active").catch(() => null),
+      me.permissions.includes("tables.provision") ? api<Tag[]>("/admin/tags").catch(() => []) : Promise.resolve([] as Tag[]),
     ]);
+    setLayout((cur) => (l && cur && cur.id === l.id && cur.version > l.version ? cur : l));
+    setTags(g);
     setTables(t);
     setRequests(r.items);
-    setOrders(o.items);
     r.items.forEach((x) => known.current.add(x.id));
-  }, []);
+  }, [me]);
 
   useEffect(() => {
     void resync().catch(() => undefined);
@@ -87,28 +91,34 @@ export function StaffDataProvider({ me, children, onSessionEnded }: { me: Me; ch
             const next = upsertVersioned(cur, r);
             return next.filter((x) => ACTIVE.has(x.status));
           });
-        } else if (ev.type === "order.updated") {
-          const o = d.order as Order;
-          setOrders((cur) => upsertVersioned(cur, o).filter((x) => PENDING_ORDERS.has(x.status)));
         } else if (ev.type === "session.closed") {
           const sid = d.session_id as string;
           setRequests((cur) => cur.filter((x) => x.session_id !== sid));
-          setOrders((cur) => cur.filter((x) => x.session_id !== sid));
-        } else if (ev.type === "menu.updated") {
-          setMenuVersion((v) => v + 1);
+        } else if (ev.type === "layout.updated") {
+          // Só a planta ATIVA vale para o Salão; trocar de planta ou mover mesas chega a todos na hora.
+          const l = d.layout as Layout;
+          if (l.is_active) setLayout((cur) => (cur && cur.id === l.id && cur.version > l.version ? cur : l));
+        } else if (ev.type === "tag.updated") {
+          const g = d.tag as Tag;
+          if (me.permissions.includes("tables.provision")) {
+            setTags((cur) => {
+              const next = upsertVersioned(cur, g).filter((x) => x.status !== "SUBSTITUIDA");
+              return next.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+            });
+          }
         }
       },
     });
-  }, [resync, onSessionEnded]);
+  }, [resync, onSessionEnded, me]);
 
   // Título da aba mostra chamados pendentes (útil com o painel em segundo plano).
-  const pending = requests.filter((r) => r.status === "PENDENTE").length;
+  const pending = requests.length;
   useEffect(() => {
     document.title = pending ? `(${pending}) Andripa — Painel` : "Andripa — Painel";
   }, [pending]);
 
   const can = useCallback((p: string) => me.permissions.includes(p), [me]);
   return (
-    <Ctx.Provider value={{ me, tables, requests, orders, conn, resync, can, menuVersion }}>{children}</Ctx.Provider>
+    <Ctx.Provider value={{ me, tables, requests, layout, tags, conn, resync, can }}>{children}</Ctx.Provider>
   );
 }

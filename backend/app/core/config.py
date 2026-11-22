@@ -30,11 +30,6 @@ class Settings(BaseSettings):
     db_pool_size: int = 10
     db_null_pool: bool = False
 
-    # Web Push (VAPID). Vazio = recurso desabilitado.
-    vapid_public_key: str = ""
-    vapid_private_key: str = ""  # PEM ou base64url do escalar privado P-256
-    vapid_subject: str = "mailto:contato@example.com"
-
     outbox_poll_seconds: float = 0.5
     # Desligue para rodar o relay do outbox em um processo dedicado (ou em testes).
     relay_enabled: bool = True
@@ -43,16 +38,20 @@ class Settings(BaseSettings):
     # Diretório opcional com o build do frontend (single-container / e2e).
     frontend_dist_dir: str = ""
 
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = "mailto:admin@example.com"
+
+    @property
+    def push_enabled(self) -> bool:
+        return bool(self.vapid_public_key and self.vapid_private_key)
+
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:
         if isinstance(v, str) and not v.strip().startswith("["):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
-
-    @property
-    def push_enabled(self) -> bool:
-        return bool(self.vapid_public_key and self.vapid_private_key)
 
 
 @lru_cache

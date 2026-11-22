@@ -1,24 +1,30 @@
 """Contratos Pydantic de entrada e saída da API."""
+
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Generic, Literal, TypeVar
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from app.core.permissions import Role
-from app.domain.states import OrderStatus, RequestStatus, RequestType, TableStatus
-from app.models import DiscountType, PromotionKind
+from app.domain.states import RequestStatus, RequestType, TableStatus, TagStatus
 
 Str80 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 Str120 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
 OptStr280 = Annotated[str, StringConstraints(strip_whitespace=True, max_length=280)] | None
 OptStr1000 = Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] | None
-Email = Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, max_length=254,
-                                         pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
-HttpsUrl = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500,
-                                            pattern=r"^https://[^\s<>\"']+$")] | None
+Username = Annotated[
+    str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=3, max_length=32, pattern=r"^[a-z0-9._-]+$")
+]
+Pin = Annotated[str, StringConstraints(pattern=r"^\d{4,8}$")]
+HttpsUrl = (
+    Annotated[str, StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^https://[^\s<>\"']+$")] | None
+)
+Email = Annotated[
+    str, StringConstraints(strip_whitespace=True, to_lower=True, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+]
 
 
 class Out(BaseModel):
@@ -31,17 +37,16 @@ class In(BaseModel):
 
 # ---------- auth / users ----------
 class LoginIn(In):
-    email: Email
-    password: str = Field(min_length=1, max_length=256)
+    username: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=32)]
+    pin: str = Field(min_length=1, max_length=16)
 
 
 class UserOut(Out):
     id: uuid.UUID
     name: str
-    email: str
+    username: str
     role: Role
     active: bool
-    has_pin: bool = False
 
 
 class MeOut(BaseModel):
@@ -55,15 +60,15 @@ class EstablishmentOut(Out):
     id: uuid.UUID
     name: str
     timezone: str
-    join_code_required: bool
     orders_enabled: bool
+    join_code_required: bool
 
 
 class EstablishmentPatch(In):
     name: Str120 | None = None
     timezone: Annotated[str, StringConstraints(max_length=64)] | None = None
-    join_code_required: bool | None = None
     orders_enabled: bool | None = None
+    join_code_required: bool | None = None
 
     @field_validator("timezone")
     @classmethod
@@ -71,6 +76,7 @@ class EstablishmentPatch(In):
         if v is None:
             return v
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
         try:
             ZoneInfo(v)
         except (ZoneInfoNotFoundError, ValueError) as e:
@@ -78,31 +84,23 @@ class EstablishmentPatch(In):
         return v
 
 
-Password = Annotated[str, StringConstraints(min_length=10, max_length=256)]
-Pin = Annotated[str, StringConstraints(pattern=r"^\d{4,8}$")]
-
-
 class UserCreate(In):
     name: Str120
-    email: Email
+    username: Username
     role: Role
-    password: Password
-    pin: Pin | None = None
+    pin: Pin
 
 
 class UserPatch(In):
     name: Str120 | None = None
     role: Role | None = None
     active: bool | None = None
-    password: Password | None = None
     pin: Pin | None = None
-    clear_pin: bool = False
 
 
-class ChangeOwnCredentials(In):
-    current_password: str = Field(min_length=1, max_length=256)
-    new_password: Password | None = None
-    new_pin: Pin | None = None
+class ChangeOwnPin(In):
+    current_pin: str = Field(min_length=1, max_length=16)
+    new_pin: Pin
 
 
 # ---------- tables / sessions ----------
@@ -119,11 +117,16 @@ class TablePatch(In):
 
 class SessionBrief(Out):
     id: uuid.UUID
-    label: str | None
     opened_at: datetime
     opened_by_name: str
-    join_code: str | None = None
-    close_requested_at: datetime | None
+
+
+class TagBrief(Out):
+    id: uuid.UUID
+    status: TagStatus
+    uid: str | None = None
+    error: str | None = None
+    updated_at: datetime
 
 
 class TableOut(Out):
@@ -131,62 +134,20 @@ class TableOut(Out):
     number: int
     name: str | None
     status: TableStatus
+    status_label: str | None = None
     active: bool
     public_url: str
     version: int
     session: SessionBrief | None = None
-    pending_requests: int = 0
+    pending_calls: int = 0
     pending_orders: int = 0
+    bill_requested: bool = False
+    unlock_requested: bool = False
+    tag: TagBrief | None = None
 
 
-class OpenTableIn(In):
-    label: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] | None = None
-    confirm_secret: str = Field(min_length=4, max_length=256, description="PIN pessoal ou senha")
-
-
-class CloseSessionIn(In):
-    payment_method: Literal["DINHEIRO", "CARTAO_CREDITO", "CARTAO_DEBITO", "PIX", "OUTRO"]
-    coupon_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=32)] | None = None
-    pending_orders_policy: Literal["block", "cancel_pending"] = "block"
-    note: OptStr280 = None
-    expected_version: int | None = None
-
-    @model_validator(mode="after")
-    def _reason(self) -> CloseSessionIn:
-        if self.pending_orders_policy == "cancel_pending" and not self.note:
-            raise ValueError("Informe o motivo ao cancelar pedidos pendentes.")
-        return self
-
-
-# ---------- service requests ----------
-class ServiceRequestOut(Out):
-    id: uuid.UUID
-    session_id: uuid.UUID
-    table_id: uuid.UUID
-    table_number: int
-    table_name: str | None
-    type: RequestType
-    status: RequestStatus
-    priority: int
-    note: str | None
-    order_id: uuid.UUID | None
-    origin: str
-    assigned_to_id: uuid.UUID | None
-    assigned_to_name: str | None
-    created_at: datetime
-    updated_at: datetime
-    claimed_at: datetime | None
-    completed_at: datetime | None
-    version: int
-
-
-class CustomerRequestIn(In):
-    type: Literal["CHAMAR_ATENDENTE", "PEDIR_CONTA"]
-    note: OptStr280 = None
-
-
-class PriorityIn(In):
-    priority: int = Field(ge=0, le=3)
+class PublicOpenIn(In):
+    pin: str = Field(min_length=1, max_length=16, description="PIN de qualquer pessoa ativa da equipe")
 
 
 # ---------- menu ----------
@@ -315,66 +276,59 @@ class OrderItemOut(Out):
 class OrderOut(Out):
     id: uuid.UUID
     number: int
-    session_id: uuid.UUID
-    table_id: uuid.UUID
-    table_number: int
-    status: OrderStatus
-    origin: str
     note: str | None
     total_cents: int
-    created_at: datetime
-    updated_at: datetime
-    version: int
     items: list[OrderItemOut]
 
 
-class OrderStatusIn(In):
-    status: OrderStatus
-    reason: OptStr280 = None
-    expected_version: int | None = None
+# ---------- service requests (chamados, pedidos e conta) ----------
+class ServiceRequestOut(Out):
+    id: uuid.UUID
+    session_id: uuid.UUID | None
+    table_id: uuid.UUID
+    table_number: int
+    table_name: str | None
+    type: RequestType
+    status: RequestStatus
+    note: str | None
+    order: OrderOut | None
+    created_at: datetime
+    completed_at: datetime | None
+    completed_by_name: str | None
+    version: int
 
 
-# ---------- session detail / bill ----------
+class CustomerRequestIn(In):
+    type: Literal["CHAMAR_ATENDENTE", "PEDIR_CONTA"]
+    note: OptStr280 = None
+
+
+# ---------- histórico da mesa ----------
 class SessionDetailOut(BaseModel):
     id: uuid.UUID
     table_id: uuid.UUID
     table_number: int
     table_name: str | None
-    table_status: TableStatus
-    label: str | None
     status: str
-    join_code: str | None
     opened_at: datetime
     opened_by_name: str
-    close_requested_at: datetime | None
     closed_at: datetime | None
-    closed_by_name: str | None = None
-    payment_method: str | None
-    subtotal_cents: int
-    discount_cents: int
-    total_cents: int
-    pending_orders: int
-    orders: list[OrderOut]
+    closed_by_name: str | None
     requests: list[ServiceRequestOut]
-    version: int
 
 
 class SessionHistoryOut(BaseModel):
     id: uuid.UUID
+    table_id: uuid.UUID
     table_number: int
-    label: str | None
     opened_at: datetime
     closed_at: datetime | None
     opened_by_name: str
     closed_by_name: str | None
-    total_cents: int | None
-    payment_method: str | None
+    requests_count: int
 
 
-T = TypeVar("T")
-
-
-class Page(BaseModel, Generic[T]):
+class Page[T](BaseModel):
     items: list[T]
     total: int
     limit: int
@@ -387,13 +341,10 @@ class PublicTableOut(BaseModel):
     timezone: str
     table_number: int
     table_name: str | None
+    status: TableStatus
     available: bool
-    join_code_required: bool
+    awaiting_release: bool
     orders_enabled: bool
-
-
-class JoinIn(In):
-    join_code: Annotated[str, StringConstraints(pattern=r"^\d{4}$")] | None = None
 
 
 class JoinOut(BaseModel):
@@ -407,96 +358,32 @@ class CustomerSessionOut(BaseModel):
     timezone: str
     table_number: int
     table_name: str | None
-    table_status: TableStatus
     orders_enabled: bool
     opened_at: datetime
     requests: list[ServiceRequestOut]
-    orders: list[OrderOut]
-    total_cents: int
     push_public_key: str | None
 
 
-# ---------- promotions / coupons ----------
-class PromotionIn(In):
-    kind: PromotionKind
+# ---------- avisos aos clientes ----------
+class NoticeIn(In):
     title: Str120
-    description: OptStr1000 = None
-    image_url: HttpsUrl = None
-    conditions: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
-    starts_at: datetime
-    ends_at: datetime
+    message: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
     active: bool = True
-
-    @model_validator(mode="after")
-    def _period(self) -> PromotionIn:
-        if self.starts_at.tzinfo is None or self.ends_at.tzinfo is None:
-            raise ValueError("Datas devem incluir fuso horário")
-        if self.ends_at <= self.starts_at:
-            raise ValueError("ends_at deve ser posterior a starts_at")
-        return self
+    send_push: bool = False
 
 
-class PromotionOut(Out):
+class NoticePatch(In):
+    title: Str120 | None = None
+    message: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
+    active: bool | None = None
+
+
+class NoticeOut(Out):
     id: uuid.UUID
-    kind: PromotionKind
     title: str
-    description: str | None
-    image_url: str | None
-    conditions: str | None
-    starts_at: datetime
-    ends_at: datetime
+    message: str | None
     active: bool
-
-
-class CouponIn(In):
-    code: Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True, pattern=r"^[A-Za-z0-9_-]{3,32}$")]
-    description: OptStr280 = None
-    discount_type: DiscountType
-    value: int = Field(gt=0, le=10_000_000)
-    min_order_cents: int = Field(default=0, ge=0)
-    max_uses: int | None = Field(default=None, ge=1)
-    starts_at: datetime
-    ends_at: datetime
-    active: bool = True
-
-    @model_validator(mode="after")
-    def _check(self) -> CouponIn:
-        if self.starts_at.tzinfo is None or self.ends_at.tzinfo is None:
-            raise ValueError("Datas devem incluir fuso horário")
-        if self.ends_at <= self.starts_at:
-            raise ValueError("ends_at deve ser posterior a starts_at")
-        if self.discount_type == DiscountType.PERCENT and self.value > 100:
-            raise ValueError("Percentual máximo é 100")
-        return self
-
-
-class CouponOut(Out):
-    id: uuid.UUID
-    code: str
-    description: str | None
-    discount_type: DiscountType
-    value: int
-    min_order_cents: int
-    max_uses: int | None
-    uses_count: int
-    starts_at: datetime
-    ends_at: datetime
-    active: bool
-
-
-class CouponValidateIn(In):
-    code: Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True, max_length=32)]
-
-
-class CouponValidateOut(BaseModel):
-    valid: bool
-    code: str
-    description: str | None = None
-    discount_type: DiscountType | None = None
-    value: int | None = None
-    min_order_cents: int | None = None
-    estimated_discount_cents: int | None = None
-    reason: str | None = None
+    created_at: datetime
 
 
 # ---------- push ----------
@@ -520,17 +407,16 @@ class PushUnsubscribeIn(In):
     endpoint: Annotated[str, StringConstraints(max_length=1000)]
 
 
-class PushBroadcastIn(In):
-    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
-    body: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240)]
-    url: Annotated[str, StringConstraints(max_length=300, pattern=r"^/[^\s]*$")] | None = None
-
-
 class PushBroadcastOut(BaseModel):
     targeted: int
     sent: int
     failed: int
     removed: int
+
+
+class NoticeCreatedOut(BaseModel):
+    notice: NoticeOut
+    push: PushBroadcastOut | None = None
 
 
 class AuditOut(BaseModel):
@@ -545,3 +431,89 @@ class AuditOut(BaseModel):
 
 
 MeOut.model_rebuild()
+
+
+# ---------- etiquetas NFC (provisionamento) ----------
+class ProvisionIn(In):
+    number: int = Field(ge=1, le=9999)
+    name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] | None = None
+    confirm_secret: str = Field(min_length=4, max_length=256, description="PIN pessoal ou senha do administrador")
+
+
+class TagStartIn(In):
+    confirm_secret: str = Field(min_length=4, max_length=256)
+    replace: bool = False
+
+
+class TagWrittenIn(In):
+    uid: str = Field(min_length=8, max_length=40, pattern=r"^[0-9A-Fa-f:]+$")
+    read_url: str = Field(min_length=1, max_length=500, description="URL lida de volta da etiqueta")
+
+
+class TagFailedIn(In):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=280)]
+
+
+class TagLockAuthIn(In):
+    confirm_secret: str = Field(min_length=4, max_length=256)
+
+
+class TagOut(Out):
+    id: uuid.UUID
+    table_id: uuid.UUID
+    table_number: int
+    table_name: str | None
+    status: TagStatus
+    url: str
+    uid: str | None
+    error: str | None
+    started_by_name: str
+    lock_authorized_at: datetime | None
+    written_at: datetime | None
+    locked_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    version: int
+
+
+class ProvisionOut(BaseModel):
+    table: TableOut
+    tag: TagOut
+    qr_svg_url: str
+
+
+# ---------- planta do salão ----------
+GRID_COLS = 24
+GRID_ROWS = 16
+
+
+class LayoutItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+    table_id: uuid.UUID
+    x: int = Field(ge=0, lt=GRID_COLS)
+    y: int = Field(ge=0, lt=GRID_ROWS)
+
+
+class LayoutOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    is_active: bool
+    version: int
+    cols: int = GRID_COLS
+    rows: int = GRID_ROWS
+    items: list[LayoutItem]
+    updated_at: datetime
+
+
+class LayoutCreateIn(In):
+    name: Str80
+    copy_from: uuid.UUID | None = None
+
+
+class LayoutRenameIn(In):
+    name: Str80
+
+
+class LayoutItemsIn(In):
+    version: int = Field(ge=1)
+    items: list[LayoutItem] = Field(max_length=GRID_COLS * GRID_ROWS)

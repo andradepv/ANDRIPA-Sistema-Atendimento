@@ -1,57 +1,39 @@
-# Máquinas de estado
+# Estados
 
-Implementadas em `backend/app/domain/states.py`. Transições fora destas tabelas retornam
-`409 invalid_transition`. Diagramas em Mermaid (renderizam no GitHub).
+Definidos em `backend/app/domain/states.py`. O fluxo é propositalmente curto: cada solicitação só é
+**feita** e depois **resolvida**, com o horário de cada momento. Diagramas em Mermaid (renderizam no GitHub).
 
 ## Mesa
 ```mermaid
 stateDiagram-v2
     [*] --> LIVRE
-    LIVRE --> OCUPADA: abrir (atendente+, PIN/senha)\ncria sessão OPEN
-    OCUPADA --> ENCERRAMENTO_SOLICITADO: pedir conta (cliente ou equipe)
-    ENCERRAMENTO_SOLICITADO --> OCUPADA: cancelar pedido de conta (caixa/admin)
-    OCUPADA --> LIVRE: encerrar (caixa/admin)
-    ENCERRAMENTO_SOLICITADO --> LIVRE: encerrar (caixa/admin)
+    LIVRE --> OCUPADA: liberar (PIN na página da mesa ou botão no painel)\ncria sessão OPEN
+    OCUPADA --> LIVRE: conta finalizada (caixa/admin)
 ```
-Encerrar exige: sessão aberta, versão esperada (se enviada) igual à atual e **nenhum pedido pendente**
-(`RECEBIDO`, `EM_PREPARO`, `PRONTO`) — ou a política explícita `cancel_pending` com motivo. No mesmo COMMIT:
-pedidos pendentes cancelados (se for o caso), cupom resgatado, totais gravados, tokens do cliente revogados,
-chamados ativos finalizados, mesa `LIVRE`, eventos no outbox.
+- “Pediu a conta” não é um estado da mesa: o painel mostra a mesa em destaque enquanto existir um
+  `PEDIR_CONTA` aguardando (`bill_requested`).
+- Conta finalizada, no mesmo COMMIT: sessão `CLOSED`, tokens do cliente revogados, `PEDIR_CONTA` concluído,
+  demais solicitações ainda aguardando marcadas como `CANCELADA`, mesa `LIVRE`, eventos no outbox.
 
-## Sessão da mesa
+## Sessão da mesa (atendimento)
 `OPEN → CLOSED`. No máximo uma `OPEN` por mesa (índice único parcial `uq_open_session_per_table`).
+O histórico de cada mesa é a lista de sessões encerradas com suas solicitações.
 
-## Chamado (service request)
+## Solicitação (service request)
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDENTE
-    PENDENTE --> ASSUMIDA: assumir (exclusivo, UPDATE condicional)
-    PENDENTE --> EM_ATENDIMENTO: pedido entrou em preparo
-    PENDENTE --> CONCLUIDA
-    PENDENTE --> CANCELADA: cliente cancela / encerramento
-    ASSUMIDA --> EM_ATENDIMENTO: iniciar
-    ASSUMIDA --> CONCLUIDA
-    ASSUMIDA --> CANCELADA
-    EM_ATENDIMENTO --> CONCLUIDA
-    EM_ATENDIMENTO --> CANCELADA
+    [*] --> PENDENTE: cliente toca no botão / envia pedido
+    PENDENTE --> CONCLUIDA: um toque da equipe
+    PENDENTE --> CANCELADA: cliente cancela o chamado / mesa encerrada
 ```
-- Tipos: `CHAMAR_ATENDENTE`, `NOVO_PEDIDO` (um por pedido, acompanha o pedido), `PEDIR_CONTA`.
-- Um chamado **ativo** por tipo e sessão (exceto `NOVO_PEDIDO`): repetir o toque devolve o mesmo chamado.
-  Depois de concluído, um novo chamado legítimo é aceito.
-- `PEDIR_CONTA` é concluído pelo caixa ao encerrar a mesa.
 
-## Pedido
-```mermaid
-stateDiagram-v2
-    [*] --> RECEBIDO
-    RECEBIDO --> EM_PREPARO
-    RECEBIDO --> PRONTO
-    RECEBIDO --> ENTREGUE
-    EM_PREPARO --> PRONTO
-    EM_PREPARO --> ENTREGUE
-    PRONTO --> ENTREGUE
-    RECEBIDO --> CANCELADO: caixa/admin, motivo
-    EM_PREPARO --> CANCELADO: caixa/admin, motivo
-    PRONTO --> CANCELADO: caixa/admin, motivo
-```
-Toda mudança grava `order_status_history` (de, para, quem, motivo, quando).
+| Tipo | Botão da equipe (PENDENTE → CONCLUIDA) | O cliente vê |
+|---|---|---|
+| `CHAMAR_ATENDENTE` | **Atendido** | Aguardando → Atendido |
+| `NOVO_PEDIDO` (um por pedido do cardápio) | **Repassado à cozinha** | Enviado → Repassado à cozinha |
+| `PEDIR_CONTA` | **Conta finalizada** (encerra a mesa) | Solicitada → atendimento encerrado |
+
+- Um chamado **aguardando** por tipo e sessão (exceto pedidos): repetir o toque devolve o mesmo chamado.
+  Depois de resolvido, um novo chamado legítimo é aceito.
+- Ao resolver, ficam gravados `completed_at` e `completed_by_id` (quem tocou).
+- Resolver é uma atualização condicional (`WHERE status = 'PENDENTE'`): toques simultâneos não duplicam.

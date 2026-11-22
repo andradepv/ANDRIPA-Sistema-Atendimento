@@ -9,7 +9,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC"]
-ignore = ["S101", "B008", "S105", "S106", "E501"]
+ignore = ["S101", "B008", "S105", "S106", "E501", "UP042"]  # UP042: str+Enum mantido de propósito (serialização)
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S", "E501"]

@@ -65,9 +65,5 @@ def new_public_code() -> str:
     return secrets.token_urlsafe(16)
 
 
-def new_join_code() -> str:
-    return f"{secrets.randbelow(10_000):04d}"
-
-
 def constant_time_eq(a: str, b: str) -> bool:
     return hmac.compare_digest(a.encode(), b.encode())

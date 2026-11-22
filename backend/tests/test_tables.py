@@ -1,36 +1,58 @@
 from concurrent.futures import ThreadPoolExecutor
 
-from conftest import Actor, Customer, open_table, pg
+from conftest import Actor, Customer, close_table, open_table, open_with_pin, pg
 
 
-def test_open_table_flow(world):
+def test_open_table_from_panel(world):
     att: Actor = world["atendente"]
     tid = world["tables"][0][0]
     r = open_table(att, tid)
     assert r.status_code == 201, r.text
     t = r.json()
     assert t["status"] == "OCUPADA"
-    assert t["session"]["label"] == "Família Silva"
     assert t["session"]["opened_by_name"].startswith("Atendente")
-    assert len(t["session"]["join_code"]) == 4
     assert t["public_url"].startswith("https://app.test/m/")
+    assert t["pending_calls"] == t["pending_orders"] == 0 and t["bill_requested"] is False
+
+
+def test_open_table_with_pin_from_table_page(world, client):
+    """“Liberar mesa”: na página da mesa, o atendente digita só o PIN."""
+    tid, code = world["tables"][0]
+    assert client.get(f"/api/v1/public/tables/{code}").json()["available"] is False
+    r = open_with_pin(client, code, "0000")
+    assert r.status_code == 403 and r.json()["error"]["code"] == "invalid_pin"
+    r = open_with_pin(client, code, "3333")
+    assert r.status_code == 201, r.text
+    assert r.json()["available"] is True and r.json()["table_number"] == 1
+    t = world["caixa"].get("/api/v1/tables").json()[0]
+    assert t["status"] == "OCUPADA" and t["session"]["opened_by_name"].startswith("Atendente")
+    # Mesa já liberada: o PIN não abre de novo.
+    r = open_with_pin(client, code, "2222")
+    assert r.status_code == 409 and r.json()["error"]["code"] == "table_not_free"
+    # Tentativa com PIN errado fica na auditoria.
+    with pg() as c:
+        n = c.execute("SELECT count(*) FROM audit_logs WHERE action='table.open_denied'").fetchone()[0]
+    assert n == 1
+
+
+def test_inactive_staff_pin_does_not_open(world, client):
+    tid, code = world["tables"][0]
+    with pg() as c:
+        c.execute("UPDATE users SET active=false WHERE username='atendente'")
+    assert open_with_pin(client, code, "3333").status_code == 403
+
+
+def test_pin_brute_force_is_rate_limited(world, client):
+    _, code = world["tables"][0]
+    codes = [open_with_pin(client, code, f"{i:04d}").status_code for i in range(4000, 4015)]
+    assert 429 in codes
 
 
 def test_cannot_open_occupied(world):
     tid = world["tables"][0][0]
     assert open_table(world["atendente"], tid).status_code == 201
-    r = open_table(world["caixa"], tid, pin="2222")
+    r = open_table(world["caixa"], tid)
     assert r.status_code == 409 and r.json()["error"]["code"] == "table_not_free"
-
-
-def test_open_requires_individual_confirmation(world):
-    tid = world["tables"][0][0]
-    r = open_table(world["atendente"], tid, pin="0000")
-    assert r.status_code == 403 and r.json()["error"]["code"] == "confirmation_failed"
-    # PIN de outro funcionário não serve.
-    assert open_table(world["atendente"], tid, pin="2222").status_code == 403
-    # A senha pessoal também é aceita como confirmação.
-    assert open_table(world["atendente"], tid, pin="senha-de-teste-123").status_code == 201
 
 
 def test_open_idempotent_replay(world):
@@ -42,12 +64,13 @@ def test_open_idempotent_replay(world):
     assert r2.headers.get("idempotent-replay") == "true"
 
 
-def test_concurrent_open_creates_single_session(world):
-    """Cenário G: vários funcionários abrindo a mesma mesa simultaneamente."""
-    tid = world["tables"][1][0]
-    actors = [(world["atendente"], "3333"), (world["caixa"], "2222"), (world["admin"], "1111")] * 3
+def test_concurrent_open_creates_single_session(world, client):
+    """Cenário G: painel e página da mesa liberando a mesma mesa ao mesmo tempo."""
+    tid, code = world["tables"][1]
+    calls = [lambda a=a: open_table(world[a], tid) for a in ("atendente", "caixa", "admin")] * 2
+    calls += [lambda p=p: open_with_pin(client, code, p) for p in ("1111", "2222", "3333")]
     with ThreadPoolExecutor(max_workers=9) as ex:
-        results = list(ex.map(lambda ap: open_table(ap[0], tid, pin=ap[1]), actors))
+        results = list(ex.map(lambda f: f(), calls))
     codes = sorted(r.status_code for r in results)
     assert codes.count(201) == 1, codes
     assert codes.count(409) == 8
@@ -68,64 +91,58 @@ def test_admin_table_management_and_qr(world):
     rot = a.post(f"/api/v1/tables/{t['id']}/rotate-code").json()
     assert rot["public_url"] != old
     # Renumerar mesa ocupada é bloqueado.
-    open_table(a, t["id"], pin="1111")
+    open_table(a, t["id"])
     assert a.patch(f"/api/v1/tables/{t['id']}", json={"number": 11}).status_code == 409
 
 
-def test_close_flow_and_token_revocation(world, client):
-    """Cenários E e F."""
+def test_bill_finished_closes_table_and_revokes_tokens(world, client):
+    """Cenários E e F: pedir a conta → “conta finalizada” → mesa livre e celular sem acesso."""
     tid, code = world["tables"][0]
     open_table(world["atendente"], tid)
     cust = Customer(client, code)
-    r = cust.post("/api/v1/public/service-requests", json={"type": "PEDIR_CONTA"})
-    assert r.status_code == 201
+    call = cust.post("/api/v1/public/service-requests", json={"type": "CHAMAR_ATENDENTE"}).json()
+    bill = cust.post("/api/v1/public/service-requests", json={"type": "PEDIR_CONTA"}).json()
     table = world["caixa"].get("/api/v1/tables").json()[0]
-    assert table["status"] == "ENCERRAMENTO_SOLICITADO"  # continua ocupada até o encerramento
-    sid = table["session"]["id"]
-    r = world["caixa"].post(f"/api/v1/table-sessions/{sid}/close", json={"payment_method": "PIX"})
+    assert table["status"] == "OCUPADA" and table["bill_requested"] is True and table["pending_calls"] == 1
+    r = world["caixa"].post(f"/api/v1/service-requests/{bill['id']}/complete")
     assert r.status_code == 200, r.text
-    assert r.json()["status"] == "CLOSED"
-    assert world["caixa"].get("/api/v1/tables").json()[0]["status"] == "LIVRE"
+    assert r.json()["status"] == "CONCLUIDA" and r.json()["completed_at"]
+    assert r.json()["completed_by_name"].startswith("Caixa")
+    t = world["caixa"].get("/api/v1/tables").json()[0]
+    assert t["status"] == "LIVRE" and t["session"] is None
     # Página antiga aberta: qualquer ação falha.
     assert cust.get("/api/v1/public/session").status_code == 401
     assert cust.post("/api/v1/public/service-requests", json={"type": "CHAMAR_ATENDENTE"}).status_code == 401
     assert cust.post("/api/v1/public/orders", json={"items": []}).status_code in (401, 422)
-    # Fechar de novo não duplica.
-    assert world["caixa"].post(f"/api/v1/table-sessions/{sid}/close",
-                               json={"payment_method": "PIX"}).status_code == 409
-    # Histórico.
-    hist = world["caixa"].get("/api/v1/table-sessions").json()
-    assert hist["total"] == 1 and hist["items"][0]["payment_method"] == "PIX"
+    # Finalizar de novo não duplica.
+    assert world["caixa"].post(f"/api/v1/service-requests/{bill['id']}/complete").status_code == 409
+    assert close_table(world["caixa"], tid).status_code == 409
+    # Histórico da mesa com horários de cada solicitação; o chamado sem resposta ficou cancelado.
+    hist = world["caixa"].get(f"/api/v1/table-sessions?table_id={tid}").json()
+    assert hist["total"] == 1 and hist["items"][0]["requests_count"] == 2
+    detail = world["caixa"].get(f"/api/v1/table-sessions/{hist['items'][0]['id']}").json()
+    statuses = {x["id"]: x["status"] for x in detail["requests"]}
+    assert statuses == {call["id"]: "CANCELADA", bill["id"]: "CONCLUIDA"}
+    assert detail["closed_at"] and detail["closed_by_name"].startswith("Caixa")
+
+
+def test_close_table_without_bill_request(world, client):
+    tid, code = world["tables"][0]
+    open_table(world["atendente"], tid)
+    Customer(client, code)
+    r = close_table(world["caixa"], tid, key="fechar-mesa-1-abc")
+    assert r.status_code == 200 and r.json()["status"] == "LIVRE"
+    assert close_table(world["caixa"], tid, key="fechar-mesa-1-abc").headers.get("idempotent-replay") == "true"
 
 
 def test_old_token_cannot_reach_new_session(world, client):
     tid, code = world["tables"][0]
     open_table(world["atendente"], tid)
     old = Customer(client, code)
-    sid = world["caixa"].get("/api/v1/tables").json()[0]["session"]["id"]
-    world["caixa"].post(f"/api/v1/table-sessions/{sid}/close", json={"payment_method": "DINHEIRO"})
-    open_table(world["atendente"], tid, label="Outra família")
+    close_table(world["caixa"], tid)
+    open_with_pin(client, code, "3333")
     new = Customer(client, code)
     assert old.get("/api/v1/public/session").status_code == 401
     assert old.post("/api/v1/public/service-requests", json={"type": "CHAMAR_ATENDENTE"}).status_code == 401
     assert new.get("/api/v1/public/session").status_code == 200
-    reqs = world["caixa"].get("/api/v1/service-requests").json()
-    assert reqs["total"] == 0
-
-
-def test_cancel_close_request(world, client):
-    tid, code = world["tables"][0]
-    open_table(world["atendente"], tid)
-    Customer(client, code).post("/api/v1/public/service-requests", json={"type": "PEDIR_CONTA"})
-    r = world["caixa"].post(f"/api/v1/tables/{tid}/cancel-close-request")
-    assert r.status_code == 200 and r.json()["status"] == "OCUPADA"
     assert world["caixa"].get("/api/v1/service-requests").json()["total"] == 0
-
-
-def test_staff_request_close_and_free_table_transitions(world):
-    tid = world["tables"][0][0]
-    r = world["atendente"].post(f"/api/v1/tables/{tid}/request-close")
-    assert r.status_code == 409  # mesa livre
-    open_table(world["atendente"], tid)
-    r = world["atendente"].post(f"/api/v1/tables/{tid}/request-close")
-    assert r.status_code == 200 and r.json()["status"] == "ENCERRAMENTO_SOLICITADO"

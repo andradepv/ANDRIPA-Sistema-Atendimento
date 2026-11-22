@@ -1,4 +1,4 @@
-"""Endpoints do cliente (QR Code / NFC). Sem conta: autorização por token de sessão da mesa."""
+"""Endpoints da página da mesa (QR Code / NFC). Sem conta: autorização por token de sessão da mesa."""
 from __future__ import annotations
 
 import uuid
@@ -11,16 +11,13 @@ from app.core.config import get_settings
 from app.core.ratelimit import client_ip, hit
 from app.db.session import get_db
 from app.schemas import (
-    CouponValidateIn,
-    CouponValidateOut,
     CustomerRequestIn,
     CustomerSessionOut,
-    JoinIn,
     JoinOut,
     MenuCategoryOut,
+    NoticeOut,
     OrderIn,
-    OrderOut,
-    PromotionOut,
+    PublicOpenIn,
     PublicTableOut,
     PushSubscribeIn,
     PushUnsubscribeIn,
@@ -28,12 +25,12 @@ from app.schemas import (
 )
 from app.services import customer as svc
 from app.services import menu as menu_svc
+from app.services import notices as notice_svc
 from app.services import orders as order_svc
-from app.services import promotions as promo_svc
 from app.services import push as push_svc
 from app.services import requests as req_svc
+from app.services import tables as table_svc
 from app.services.idempotency import run_idempotent
-from app.services.tables import session_totals
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -44,11 +41,25 @@ async def public_table(code: str, request: Request, db: AsyncSession = Depends(g
     return await svc.public_table(db, code)
 
 
+@router.post("/tables/{code}/open", response_model=PublicTableOut, status_code=201)
+async def open_with_pin(code: str, data: PublicOpenIn, request: Request,
+                        db: AsyncSession = Depends(get_db)) -> PublicTableOut:
+    """“Liberar mesa” na página da mesa: o atendente digita o PIN e pronto."""
+    t, _ = await svc.find_table(db, code)
+    await table_svc.public_open(db, t, data.pin, client_ip(request))
+    await db.commit()
+    return await svc.public_table(db, code)
+
+@router.post("/tables/{code}/request-open", response_model=PublicTableOut)
+async def request_open(code: str, request: Request, db: AsyncSession = Depends(get_db)) -> PublicTableOut:
+    """Cliente tocou em 'Cliente' na página da mesa: notifica a equipe para liberar a mesa."""
+    await hit(f"reqopen:ip:{client_ip(request)}", 30, 60)
+    return await svc.request_open(db, code, client_ip(request))
+
 @router.post("/tables/{code}/join", response_model=JoinOut)
-async def join(code: str, data: JoinIn, request: Request, db: AsyncSession = Depends(get_db)) -> JoinOut:
-    ip = client_ip(request)
-    await hit(f"join:ip:{ip}", 30, 60)
-    return await svc.join(db, code, data, ip)
+async def join(code: str, request: Request, db: AsyncSession = Depends(get_db)) -> JoinOut:
+    await hit(f"join:ip:{client_ip(request)}", 30, 60)
+    return await svc.join(db, code)
 
 
 @router.get("/session", response_model=CustomerSessionOut)
@@ -59,6 +70,11 @@ async def session_state(ctx: CustomerCtx = Depends(get_customer), db: AsyncSessi
 @router.get("/menu", response_model=list[MenuCategoryOut])
 async def menu(ctx: CustomerCtx = Depends(get_customer), db: AsyncSession = Depends(get_db)) -> list[MenuCategoryOut]:
     return await menu_svc.public_menu(db, ctx.establishment.id)
+
+
+@router.get("/notices", response_model=list[NoticeOut])
+async def notices(ctx: CustomerCtx = Depends(get_customer), db: AsyncSession = Depends(get_db)) -> list[NoticeOut]:
+    return await notice_svc.list_active(db, ctx.establishment.id)
 
 
 async def _customer_limits(ctx: CustomerCtx, request: Request) -> None:
@@ -85,27 +101,13 @@ async def cancel_request(request_id: uuid.UUID, request: Request, ctx: CustomerC
     return out
 
 
-@router.post("/orders", response_model=OrderOut, status_code=201)
+@router.post("/orders", response_model=ServiceRequestOut, status_code=201)
 async def create_order(data: OrderIn, request: Request, idempotency_key: str | None = Header(default=None),
                        ctx: CustomerCtx = Depends(get_customer), db: AsyncSession = Depends(get_db)) -> Response:
     await _customer_limits(ctx, request)
     await hit(f"cust:orders:{ctx.session.id}", 15, 300)
     return await run_idempotent(db, scope=f"order:{ctx.session.id}", key=idempotency_key, request_body=data,
                                 status_code=201, action=lambda: order_svc.create_customer_order(db, ctx, data))
-
-
-@router.get("/promotions", response_model=list[PromotionOut])
-async def promotions(ctx: CustomerCtx = Depends(get_customer), db: AsyncSession = Depends(get_db)) -> list[PromotionOut]:
-    return await promo_svc.active_promotions(db, ctx.establishment.id)
-
-
-@router.post("/coupons/validate", response_model=CouponValidateOut)
-async def validate_coupon(data: CouponValidateIn, request: Request, ctx: CustomerCtx = Depends(get_customer),
-                          db: AsyncSession = Depends(get_db)) -> CouponValidateOut:
-    await hit(f"coupon:session:{ctx.session.id}", 10, 300)
-    await hit(f"coupon:ip:{client_ip(request)}", 20, 300)
-    subtotal, _ = await session_totals(db, ctx.session.id)
-    return await promo_svc.validate_coupon(db, ctx.establishment.id, data.code, subtotal)
 
 
 @router.get("/push/config")

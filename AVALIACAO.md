@@ -1,5 +1,10 @@
 # Avaliação independente do sistema Andripa
 
+> **Nota (04/11/2026):** esta avaliação é da primeira versão. Depois dela o sistema foi simplificado para o
+> MVP ([ADR-0007](docs/adr/0007-mvp-simplificado.md)); os resultados atuais estão em
+> [docs/10-relatorio-testes.md](docs/10-relatorio-testes.md). Do que está listado abaixo, o teste instável
+> (§3.1) foi corrigido; versões sem fixar (§3.2) e `--forwarded-allow-ips "*"` (§3.3) continuam pendentes.
+
 Data: 23/10/2026 · Ambiente: Windows 11 + Docker (PostgreSQL 16, Redis 7, Python 3.13, Node 24, Chromium)
 
 ## 1. O que é o sistema

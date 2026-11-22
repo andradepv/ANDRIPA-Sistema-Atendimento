@@ -16,42 +16,24 @@ class Role(str, enum.Enum):
 class Perm(str, enum.Enum):
     TABLES_VIEW = "tables.view"
     TABLES_OPEN = "tables.open"
-    TABLES_REQUEST_CLOSE = "tables.request_close"
     TABLES_CLOSE = "tables.close"
     TABLES_MANAGE = "tables.manage"
-    REQUESTS_VIEW = "requests.view"
     REQUESTS_HANDLE = "requests.handle"
-    REQUESTS_PRIORITIZE = "requests.prioritize"
-    ORDERS_VIEW = "orders.view"
-    ORDERS_UPDATE_STATUS = "orders.update_status"
-    ORDERS_CANCEL = "orders.cancel"
-    CASH_VIEW = "cash.view"
     HISTORY_VIEW = "history.view"
     MENU_MANAGE = "menu.manage"
-    PROMOTIONS_MANAGE = "promotions.manage"
-    PUSH_SEND = "push.send"
+    NOTICES_MANAGE = "notices.manage"
     USERS_MANAGE = "users.manage"
     AUDIT_VIEW = "audit.view"
     SETTINGS_MANAGE = "settings.manage"
+    TABLES_PROVISION = "tables.provision"  # criar mesa + gravar/travar etiqueta NFC (só administrador)
+    LAYOUTS_MANAGE = "layouts.manage"      # editar e ativar plantas (templates) do salão (só administrador)
 
 
-_ATENDENTE = {
-    Perm.TABLES_VIEW,
-    Perm.TABLES_OPEN,
-    Perm.TABLES_REQUEST_CLOSE,
-    Perm.REQUESTS_VIEW,
-    Perm.REQUESTS_HANDLE,
-    Perm.ORDERS_VIEW,
-    Perm.ORDERS_UPDATE_STATUS,
-}
+# Atendente: libera mesas e resolve chamados e pedidos.
+_ATENDENTE = {Perm.TABLES_VIEW, Perm.TABLES_OPEN, Perm.REQUESTS_HANDLE}
 
-_CAIXA = _ATENDENTE | {
-    Perm.TABLES_CLOSE,
-    Perm.REQUESTS_PRIORITIZE,
-    Perm.ORDERS_CANCEL,
-    Perm.CASH_VIEW,
-    Perm.HISTORY_VIEW,
-}
+# Caixa: além disso, finaliza a conta (encerra a mesa) e consulta o histórico.
+_CAIXA = _ATENDENTE | {Perm.TABLES_CLOSE, Perm.HISTORY_VIEW}
 
 # O administrador possui todas as permissões, inclusive as que forem criadas no futuro.
 ROLE_PERMISSIONS: dict[Role, frozenset[Perm]] = {

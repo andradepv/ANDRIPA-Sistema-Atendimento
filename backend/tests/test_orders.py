@@ -1,6 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 
-from conftest import Customer, open_table, pg
+from conftest import Customer, close_table, open_table, pg
 
 
 def _setup(world, client):
@@ -20,13 +20,15 @@ def test_customer_menu_and_order(client, world, menu):
         {"product_id": menu["agua"]["id"], "quantity": 1},
     ]})
     assert r.status_code == 201, r.text
-    o = r.json()
-    assert o["status"] == "RECEBIDO" and o["total_cents"] == 2 * (2500 + 500) + 500
+    req = r.json()
+    o = req["order"]
+    assert req["type"] == "NOVO_PEDIDO" and req["status"] == "PENDENTE"
+    assert o["total_cents"] == 2 * (2500 + 500) + 500
     assert o["items"][0]["options"][0]["name"] == "Bacon"
-    staff = world["atendente"].get("/api/v1/orders?active=true").json()
+    staff = world["atendente"].get("/api/v1/service-requests").json()
     assert staff["total"] == 1 and staff["items"][0]["table_number"] == 1
-    reqs = world["atendente"].get("/api/v1/service-requests").json()["items"]
-    assert reqs[0]["type"] == "NOVO_PEDIDO" and reqs[0]["order_id"] == o["id"]
+    assert staff["items"][0]["order"]["id"] == o["id"]
+    assert world["atendente"].get("/api/v1/tables").json()[0]["pending_orders"] == 1
 
 
 def test_price_manipulation_rejected(client, world, menu):
@@ -46,11 +48,11 @@ def test_price_comes_from_catalog_at_confirmation(client, world, menu):
     _, c = _setup(world, client)
     world["admin"].patch(f"/api/v1/menu/products/{menu['agua']['id']}", json={"price_cents": 700})
     o = c.post("/api/v1/public/orders", json={"items": [{"product_id": menu["agua"]["id"], "quantity": 1}]}).json()
-    assert o["total_cents"] == 700
+    assert o["order"]["total_cents"] == 700
     # Alteração posterior não muda pedido histórico.
     world["admin"].patch(f"/api/v1/menu/products/{menu['agua']['id']}", json={"price_cents": 900})
-    again = world["caixa"].get("/api/v1/orders").json()["items"][0]
-    assert again["total_cents"] == 700
+    again = world["caixa"].get("/api/v1/service-requests").json()["items"][0]
+    assert again["order"]["total_cents"] == 700
 
 
 def test_invalid_options_and_unavailable(client, world, menu):
@@ -71,53 +73,37 @@ def test_invalid_options_and_unavailable(client, world, menu):
     assert agua["available"] is False
 
 
-def test_order_status_transitions_and_permissions(client, world, menu):
-    _, c = _setup(world, client)
-    o = c.post("/api/v1/public/orders", json={"items": [{"product_id": menu["agua"]["id"], "quantity": 1}]}).json()
-    att = world["atendente"]
-    url = f"/api/v1/orders/{o['id']}/status"
-    assert att.post(url, json={"status": "EM_PREPARO"}).json()["status"] == "EM_PREPARO"
-    assert att.post(url, json={"status": "CANCELADO", "reason": "x"}).status_code == 403
-    assert att.post(url, json={"status": "RECEBIDO"}).status_code == 409
-    assert att.post(url, json={"status": "PRONTO", "expected_version": 1}).status_code == 409  # versão velha
-    assert att.post(url, json={"status": "PRONTO"}).status_code == 200
-    assert att.post(url, json={"status": "ENTREGUE"}).json()["status"] == "ENTREGUE"
-    assert att.post(url, json={"status": "EM_PREPARO"}).status_code == 409
-    state = c.get("/api/v1/public/session").json()
-    assert state["orders"][0]["status"] == "ENTREGUE"
-    assert all(r["status"] == "CONCLUIDA" for r in state["requests"] if r["type"] == "NOVO_PEDIDO")
-    with pg() as cn:
-        hist = cn.execute("SELECT to_status FROM order_status_history WHERE order_id=%s ORDER BY created_at",
-                          (o["id"],)).fetchall()
-    assert [h[0] for h in hist] == ["RECEBIDO", "EM_PREPARO", "PRONTO", "ENTREGUE"]
-
-
-def test_close_blocked_by_pending_orders(client, world, menu):
-    _, c = _setup(world, client)
-    o = c.post("/api/v1/public/orders", json={"items": [{"product_id": menu["burger"]["id"], "quantity": 1}]}).json()
-    sid = o["session_id"]
-    r = world["caixa"].post(f"/api/v1/table-sessions/{sid}/close", json={"payment_method": "PIX"})
-    assert r.status_code == 409 and r.json()["error"]["code"] == "pending_orders"
-    assert world["caixa"].post(f"/api/v1/table-sessions/{sid}/close",
-                               json={"payment_method": "PIX", "pending_orders_policy": "cancel_pending"}).status_code == 422
-    r = world["caixa"].post(f"/api/v1/table-sessions/{sid}/close",
-                            json={"payment_method": "PIX", "pending_orders_policy": "cancel_pending",
-                                  "note": "cliente desistiu"})
-    assert r.status_code == 200 and r.json()["total_cents"] == 0
-    assert r.json()["orders"][0]["status"] == "CANCELADO"
-
-
-def test_bill_total_and_closed_session_rejects_orders(client, world, menu):
+def test_order_forwarded_to_kitchen(client, world, menu):
+    """O pedido só precisa ser repassado à cozinha; o cliente vê o horário em que isso aconteceu."""
     tid, c = _setup(world, client)
-    o = c.post("/api/v1/public/orders", json={"items": [{"product_id": menu["burger"]["id"], "quantity": 2}]}).json()
-    world["atendente"].post(f"/api/v1/orders/{o['id']}/status", json={"status": "ENTREGUE"})
-    detail = world["caixa"].get(f"/api/v1/table-sessions/{o['session_id']}").json()
-    assert detail["subtotal_cents"] == 5000 and detail["pending_orders"] == 0
-    r = world["caixa"].post(f"/api/v1/table-sessions/{o['session_id']}/close",
-                            json={"payment_method": "CARTAO_CREDITO", "expected_version": detail["version"]})
-    assert r.status_code == 200 and r.json()["total_cents"] == 5000
+    o = c.post("/api/v1/public/orders", json={"items": [{"product_id": menu["agua"]["id"], "quantity": 1}]}).json()
+    r = world["atendente"].post(f"/api/v1/service-requests/{o['id']}/complete")
+    assert r.status_code == 200 and r.json()["status"] == "CONCLUIDA"
+    assert world["atendente"].post(f"/api/v1/service-requests/{o['id']}/complete").status_code == 409
+    mine = c.get("/api/v1/public/session").json()["requests"][0]
+    assert mine["type"] == "NOVO_PEDIDO" and mine["status"] == "CONCLUIDA" and mine["completed_at"]
+    assert mine["order"]["items"][0]["product_name"] == "Água"
+    assert world["atendente"].get("/api/v1/tables").json()[0]["pending_orders"] == 0
+    # Vários pedidos podem estar aguardando ao mesmo tempo.
+    for _ in range(2):
+        assert c.post("/api/v1/public/orders", json={"items": [{"product_id": menu["agua"]["id"],
+                                                                "quantity": 1}]}).status_code == 201
+    assert world["atendente"].get("/api/v1/tables").json()[0]["pending_orders"] == 2
+
+
+def test_closed_session_rejects_orders(client, world, menu):
+    tid, c = _setup(world, client)
+    c.post("/api/v1/public/orders", json={"items": [{"product_id": menu["burger"]["id"], "quantity": 2}]})
+    assert close_table(world["caixa"], tid).status_code == 200
     after = c.post("/api/v1/public/orders", json={"items": [{"product_id": menu["agua"]["id"], "quantity": 1}]})
     assert after.status_code == 401
+
+
+def test_orders_disabled(client, world, menu):
+    _, c = _setup(world, client)
+    assert world["admin"].patch("/api/v1/admin/establishment", json={"orders_enabled": False}).status_code == 200
+    r = c.post("/api/v1/public/orders", json={"items": [{"product_id": menu["agua"]["id"], "quantity": 1}]})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "orders_disabled"
 
 
 def test_order_idempotent_under_retries(client, world, menu):
@@ -134,8 +120,8 @@ def test_order_idempotent_under_retries(client, world, menu):
 
 
 def test_order_vs_close_race(client, world, menu):
-    """Pedido concorrente ao encerramento: ou entra antes (e bloqueia o fechamento) ou é rejeitado."""
-    _, c = _setup(world, client)
+    """Pedido concorrente ao encerramento: ou entra antes (e fica no histórico) ou é rejeitado."""
+    tid, c = _setup(world, client)
     sid = c.get("/api/v1/public/session").json()["session_id"]
     body = {"items": [{"product_id": menu["agua"]["id"], "quantity": 1}]}
 
@@ -143,7 +129,7 @@ def test_order_vs_close_race(client, world, menu):
         return c.post("/api/v1/public/orders", json=body)
 
     def close():
-        return world["caixa"].post(f"/api/v1/table-sessions/{sid}/close", json={"payment_method": "PIX"})
+        return close_table(world["caixa"], tid)
 
     with ThreadPoolExecutor(max_workers=2) as ex:
         fo, fc = ex.submit(order), ex.submit(close)
@@ -151,10 +137,13 @@ def test_order_vs_close_race(client, world, menu):
     with pg() as cn:
         n_orders = cn.execute("SELECT count(*) FROM orders WHERE session_id=%s", (sid,)).fetchone()[0]
         status = cn.execute("SELECT status FROM table_sessions WHERE id=%s", (sid,)).fetchone()[0]
+    assert rc.status_code == 200 and status == "CLOSED"
     if ro.status_code == 201:
-        assert rc.status_code == 409 and status == "OPEN" and n_orders == 1  # nenhum pedido perdido
+        assert n_orders == 1  # entrou antes do encerramento e ficou registrado no histórico
+        detail = world["caixa"].get(f"/api/v1/table-sessions/{sid}").json()
+        assert [r["type"] for r in detail["requests"]] == ["NOVO_PEDIDO"]
     else:
-        assert ro.status_code == 401 and rc.status_code == 200 and n_orders == 0
+        assert ro.status_code == 401 and n_orders == 0
 
 
 def test_menu_admin_validation(world):

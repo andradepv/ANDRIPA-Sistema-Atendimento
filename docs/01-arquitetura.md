@@ -1,7 +1,12 @@
-# Andripa — Fase 1: Análise e arquitetura
+# Andripa — Análise e arquitetura
 
+> **Atualização de 04/11/2026:** o MVP foi simplificado (página da mesa com “Cliente” / “Liberar mesa”,
+> login por usuário + PIN, solicitações só feitas/resolvidas, uma aba de Salão, avisos no lugar de
+> promoções e cupons). Onde este documento divergir, valem [ADR-0007](adr/0007-mvp-simplificado.md) e os
+> documentos 02 a 05. O texto abaixo é o planejamento original da Fase 1.
+>
 > Sistema web de atendimento para bares e restaurantes. Este documento é a base técnica do projeto
-> e reflete o que foi efetivamente implementado. Diferenças em relação ao documento de requisitos
+> e reflete o que foi implementado na primeira versão. Diferenças em relação ao documento de requisitos
 > (`Ideia.md`) estão justificadas na seção 13 e em `docs/adr/`.
 
 ## 1. Resumo funcional
@@ -10,14 +15,12 @@ O cliente senta, o atendente **abre a mesa** no painel (confirmando com seu PIN 
 A partir daí o endereço permanente da mesa (QR Code + tag NFC, ambos para a mesma URL
 `https://<dominio>/m/<codigo-publico>`) dá acesso a:
 
-- cardápio real (categorias, produtos, preços, adicionais, indisponibilidade);
-- carrinho e envio de pedidos (preço recalculado no servidor);
-- **Chamar atendente** e **Pedir a conta**, com estado acompanhado em tempo real;
-- promoções e eventos vigentes, validação de cupom e inscrição opcional em notificações push.
+- **Chamar atendente** e **Pedir a conta**, com o estado do chamado acompanhado em tempo real
+  (aguardando, assumido, em atendimento, concluído).
 
-Funcionários usam painéis em tempo real (WebSocket): **atendente** (mesas, chamados, pedidos),
-**caixa** (tudo do atendente + contas, encerramento, histórico) e **administrador** (tudo +
-cardápio, mesas, usuários, promoções, push, auditoria, configurações).
+Funcionários usam painéis em tempo real (WebSocket): **atendente** (mesas e chamados), **caixa** (tudo do
+atendente + pedidos de conta, encerramento de mesas, priorização, histórico) e **administrador** (tudo +
+mesas, QR Codes, etiquetas NFC, planta do salão, usuários, auditoria, configurações).
 
 Encerrar a mesa invalida todos os tokens do cliente daquela sessão; a mesa volta a `LIVRE`.
 
@@ -55,7 +58,6 @@ permite cookies `SameSite=Strict` para funcionários.
 | Frontend | React 19 + TypeScript + Vite | Exigido |
 | Componentes | Componentes próprios sobre HTML semântico | Ver ADR-0003 |
 | PWA | Manifesto + service worker escrito à mão | Controle total da estratégia de cache (ADR-0004) |
-| Push | Web Push com VAPID (RFC 8291/8292) implementado sobre `cryptography` + `httpx` | Implementação real, sem serviço terceiro |
 | QR Code | `segno` (SVG) | Biblioteca pura em Python, sem dependências |
 | IaC | Terraform | Ecossistema maduro, multi-ambiente com `tfvars` |
 
@@ -66,25 +68,22 @@ permite cookies `SameSite=Strict` para funcionários.
 2. Mesa `LIVRE` → mensagem "atendimento digital indisponível", nenhuma ação possível.
 3. Mesa ocupada → `POST /public/tables/<codigo>/join` (com código de 4 dígitos se o
    estabelecimento exigir) → recebe **token opaco vinculado à sessão** (não à mesa).
-4. Usa cardápio, carrinho, pedidos, chamar atendente, pedir conta — tudo com o token.
+4. Chama o atendente ou pede a conta — tudo com o token.
 5. WebSocket `/ws/customer` autentica com o token na primeira mensagem e recebe atualizações.
 6. Mesa encerrada → evento `session.closed` + token passa a responder 401 → tela "sessão encerrada".
 
 ### Atendente
-Login → painel: mesas (estado, tempo aberta, código de entrada), chamados ordenados por prioridade
-e antiguidade, pedidos ativos. Abre mesa (número já cadastrado + nome de identificação + PIN/senha),
-assume chamado (exclusivo), inicia/conclui atendimento, atualiza pedidos
-(`RECEBIDO → EM_PREPARO → PRONTO → ENTREGUE`).
+Login → painel: mesas (estado, tempo aberta, código de entrada) e chamados ordenados por prioridade e
+antiguidade. Abre mesa (número já cadastrado + nome de identificação + PIN/senha), assume chamado
+(exclusivo), inicia e conclui o atendimento.
 
 ### Caixa
-Tudo do atendente + painel de caixa: mesas com conta solicitada, comanda detalhada, total
-calculado no servidor, aplicação de cupom, forma de pagamento (apenas registro), encerramento,
-cancelamento de pedidos, priorização manual, histórico de sessões encerradas.
+Tudo do atendente + painel de caixa: mesas com conta solicitada, encerramento da mesa, priorização manual
+de chamados e histórico de sessões encerradas.
 
 ### Administrador
-Tudo do caixa + cadastro de mesas (com QR para impressão e URL para gravar na tag NFC),
-categorias/produtos/adicionais, usuários e papéis, promoções e cupons, envio de push com
-consentimento, auditoria, configurações do estabelecimento.
+Tudo do caixa + cadastro de mesas (com QR para impressão e gravação da etiqueta NFC), planta do salão,
+usuários e papéis, auditoria e configurações do estabelecimento.
 
 ## 4. Matriz de permissões
 
@@ -100,12 +99,8 @@ enviado pelo frontend; o papel vem da sessão no banco.
 | `tables.manage` cadastrar/editar mesas, QR | | | ✔ |
 | `requests.view` / `requests.handle` | ✔ | ✔ | ✔ |
 | `requests.prioritize` priorização manual | | ✔ | ✔ |
-| `orders.view` / `orders.update_status` | ✔ | ✔ | ✔ |
-| `orders.cancel` | | ✔ | ✔ |
-| `cash.view` painel de caixa, comanda | | ✔ | ✔ |
+| `cash.view` painel de caixa | | ✔ | ✔ |
 | `history.view` histórico de sessões | | ✔ | ✔ |
-| `menu.manage` | | | ✔ |
-| `promotions.manage` / `push.send` | | | ✔ |
 | `users.manage` | | | ✔ |
 | `audit.view` | | | ✔ |
 | `settings.manage` | | | ✔ |
@@ -122,21 +117,14 @@ usado como cursor ordenado). Datas em UTC (`timestamptz`). Todo registro operaci
 | `users` | Funcionários; `role` ∈ ADMIN/CAIXA/ATENDENTE; hash Argon2id de senha e PIN | e-mail único global |
 | `staff_sessions` | Sessões de login (token opaco com hash SHA-256), expiração, revogação | → users |
 | `tables` | Mesa física; `number` único por estabelecimento; `public_code` aleatório (128 bits) | → establishments |
-| `table_sessions` | Abertura de mesa; `status` OPEN/CLOSED; código de entrada; totais no fechamento | **índice único parcial: 1 sessão aberta por mesa** |
+| `table_sessions` | Abertura de mesa; `status` OPEN/CLOSED; código de entrada | **índice único parcial: 1 sessão aberta por mesa** |
 | `customer_tokens` | Tokens do cliente (hash), vinculados à sessão | → table_sessions; revogados no fechamento |
-| `service_requests` | Chamados: CHAMAR_ATENDENTE, NOVO_PEDIDO, PEDIR_CONTA | **índice único parcial: 1 chamado ativo por tipo/sessão** (exceto NOVO_PEDIDO) |
-| `categories`, `products` | Cardápio; inativação em vez de exclusão | produto → categoria |
-| `option_groups`, `product_options` | Adicionais com mínimo/máximo de escolha | → products |
-| `orders`, `order_items` | Pedido com snapshot de nome e preço | → table_sessions; itens → products |
-| `order_status_history` | Toda mudança de estado de pedido | → orders, users |
+| `service_requests` | Chamados: CHAMAR_ATENDENTE e PEDIR_CONTA | **índice único parcial: 1 chamado ativo por tipo/sessão** |
 | `outbox_events` | Eventos gravados na mesma transação da mudança | publicado → `published_at` |
 | `idempotency_keys` | Resposta armazenada por (escopo, chave) | único (scope, key) |
-| `push_subscriptions` | Inscrições Web Push com consentimento | endpoint único |
-| `promotions` | Banners, eventos, campanhas com período de validade | — |
-| `coupons` | Cupons com validade, limite de uso, valor mínimo | código único por estabelecimento |
+| `table_tags` | Gravação da etiqueta NFC de cada mesa (estado, UID, URL conferida) | → tables; 1 etiqueta viva por mesa |
+| `floor_layouts`, `floor_layout_items` | Plantas do salão (grade 24 × 16) e posição de cada mesa | → tables; 1 planta ativa |
 | `audit_logs` | Ações relevantes (quem, o quê, quando, alvo, detalhes) | — |
-
-Fidelidade (`LoyaltyRecords`) **não** foi implementada nesta entrega — ver limitações.
 
 ## 6. Máquinas de estado
 
@@ -144,15 +132,12 @@ Fidelidade (`LoyaltyRecords`) **não** foi implementada nesta entrega — ver li
 Mesa:     LIVRE ──abrir──▶ OCUPADA ──pedir conta──▶ ENCERRAMENTO_SOLICITADO
             ▲                 │  ▲                        │
             │                 │  └──cancelar pedido conta─┘
-            └──── encerrar (caixa/admin, sem pedidos pendentes ou com política explícita) ◀─┘
+            └──── encerrar (caixa/admin) ◀─┘
 
 Chamado:  PENDENTE ─assumir─▶ ASSUMIDA ─iniciar─▶ EM_ATENDIMENTO ─concluir─▶ CONCLUIDA
              │                   │                                     
              └──cancelar─────────┴──────────────▶ CANCELADA
            (PENDENTE → EM_ATENDIMENTO e PENDENTE → CONCLUIDA também são permitidos ao assumir direto)
-
-Pedido:   RECEBIDO ─▶ EM_PREPARO ─▶ PRONTO ─▶ ENTREGUE
-             └──────────┴──── cancelar (caixa/admin) ──▶ CANCELADO
 ```
 
 O estado `ENCERRANDO` previsto como opcional **não** foi necessário: o encerramento ocorre
@@ -190,12 +175,12 @@ retorna `409 invalid_transition`.
   estado atual.
 - **Assumir chamado**: `UPDATE … WHERE id = :id AND status = 'PENDENTE' RETURNING` — apenas um
   vence; o outro recebe `409 already_claimed` com o responsável.
-- **Idempotência**: cabeçalho `Idempotency-Key` em abrir mesa, criar chamado, criar pedido, pedir
+- **Idempotência**: cabeçalho `Idempotency-Key` em abrir mesa, criar chamado, pedir
   conta e encerrar. A resposta fica em `idempotency_keys`; repetição devolve a mesma resposta;
   mesma chave com corpo diferente → `422 idempotency_key_reused`.
 - **Chamados duplicados**: índice único parcial por (sessão, tipo) enquanto ativo; repetir
   "Chamar atendente" devolve o chamado já ativo. Concluído, um novo chamado é permitido.
-- **Versões**: chamados e pedidos têm `version`; eventos carregam o objeto completo com versão;
+- **Versões**: mesas, sessões e chamados têm `version`; eventos carregam o objeto completo com versão;
   a interface só aplica versões maiores (deduplicação natural).
 - **Outbox**: toda mudança grava `outbox_events` na mesma transação. Cada instância roda um relay
   (`FOR UPDATE SKIP LOCKED`) que publica no canal Redis `andripa:events` e marca `published_at`.
@@ -219,7 +204,7 @@ andripa/
 │       ├── domain/     máquinas de estado
 │       ├── models/     modelos SQLAlchemy
 │       ├── schemas/    contratos Pydantic
-│       ├── services/   regras de negócio (mesas, chamados, pedidos, cardápio, push…)
+│       ├── services/   regras de negócio (mesas, chamados, etiquetas, plantas…)
 │       └── realtime/   outbox relay, broker Redis, gerenciador de conexões
 ├── frontend/           React + TS + Vite, PWA (public/sw.js, manifest), testes e2e Playwright
 ├── infra/terraform/    AWS (VPC, ECS Fargate, ALB, RDS, ElastiCache, S3, CloudFront, Secrets, CloudWatch)
@@ -236,17 +221,15 @@ andripa/
 | 2 | API sobe, migração aplica, login/logout/me, RBAC com testes |
 | 3 | Mesas, abertura/encerramento, QR/NFC, tokens de cliente, revogação, concorrência |
 | 4 | Chamados, outbox, WebSocket staff/cliente, painéis com reconexão |
-| 5 | Cardápio (admin), cardápio do cliente, carrinho, pedidos e estados |
-| 6 | PWA instalável, Web Push, promoções e cupons |
-| 7 | Docker, Terraform, CI/CD, docs operacionais, relatório de testes |
+| 5 | Etiquetas NFC e planta do salão |
+| 6 | Docker, Terraform, CI/CD, docs operacionais, relatório de testes |
 
 ## 11. Critérios de aceitação por fase
 - F2: `pytest tests/test_auth.py tests/test_permissions.py` verde contra PostgreSQL real.
 - F3: abrir mesa ocupada → 409; abertura concorrente gera exatamente 1 sessão; token antigo → 401.
 - F4: chamado aparece via WebSocket em outra instância (via Redis); reconexão recupera estado.
-- F5: preço manipulado no corpo é ignorado; pedido em sessão encerrada → 401.
-- F6: manifesto válido, SW registrado; criptografia Web Push validada com o vetor da RFC 8291.
-- F7: cenários A–J do documento de requisitos demonstrados (ver `docs/10-relatorio-testes.md`).
+- F5: gravação de etiqueta confere a URL lida de volta; a mesma etiqueta não serve a duas mesas.
+- F6: cenários de uso demonstrados (ver `docs/10-relatorio-testes.md`).
 
 ## 12. Riscos e mitigação
 | Risco | Mitigação |
@@ -255,13 +238,13 @@ andripa/
 | Abuso do link público | Token por sessão, código de entrada opcional, rate limit por IP e por sessão |
 | Escala horizontal com WebSocket | Redis Pub/Sub; ALB com stickiness desnecessária |
 | Redis fora do ar | Degradação controlada documentada e testada |
-| Push não suportado (iOS sem PWA instalado etc.) | Recurso opcional; atendimento não depende dele |
 | Corrida em operações críticas | Locks de linha, updates condicionais, índices únicos parciais, idempotência |
 | Vazamento de dados entre estabelecimentos | `establishment_id` obrigatório em todas as consultas + testes dedicados |
 
-## 13. Decisões que divergem do texto de requisitos
-- **Roles/Permissions** em código, não em tabelas (ADR-0001): três papéis fixos são o requisito;
-  tabela de permissões dinâmicas aumentaria a superfície de erro sem benefício atual.
+## 13. Decisões de escopo
+- **Só chamado de garçom e gestão de mesas**: cardápio, pedidos, cupons, promoções, push e valores da
+  conta foram removidos de propósito; a cobrança fica no caixa/PDV do estabelecimento.
+- **Roles/Permissions** em código, não em tabelas (ADR-0001): três papéis fixos bastam; tabela de
+  permissões dinâmicas aumentaria a superfície de erro sem benefício atual.
 - **Estado ENCERRANDO** não usado (ADR-0002).
 - **Biblioteca de componentes**: componentes próprios acessíveis (ADR-0003).
-- **Fidelidade**: estrutura documentada, não implementada (sem botões na interface).

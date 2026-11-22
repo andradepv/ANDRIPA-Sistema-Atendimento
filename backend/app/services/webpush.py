@@ -3,6 +3,7 @@
 Implementado sobre `cryptography` para evitar dependências extras. Validado contra o vetor
 de teste da RFC 8291 (tests/test_webpush.py).
 """
+
 from __future__ import annotations
 
 import base64
@@ -71,8 +72,8 @@ def encrypt(
 def decrypt(body: bytes, ua_private: ec.EllipticCurvePrivateKey, auth_secret_b64: str) -> bytes:
     """Lado do navegador — usado apenas nos testes."""
     salt, rs, idlen = body[:16], struct.unpack("!I", body[16:20])[0], body[20]
-    as_public = body[21:21 + idlen]
-    ciphertext = body[21 + idlen:]
+    as_public = body[21 : 21 + idlen]
+    ciphertext = body[21 + idlen :]
     assert rs >= 18
     ua_public = _pub_bytes(ua_private.public_key())
     as_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), as_public)
@@ -102,13 +103,19 @@ def generate_vapid_keys() -> tuple[str, str]:
     return b64u_encode(_pub_bytes(k.public_key())), b64u_encode(priv)
 
 
-def vapid_header(endpoint: str, private_key: ec.EllipticCurvePrivateKey, public_key_b64: str,
-                 subject: str, ttl_seconds: int = 12 * 3600) -> str:
+def vapid_header(
+    endpoint: str,
+    private_key: ec.EllipticCurvePrivateKey,
+    public_key_b64: str,
+    subject: str,
+    ttl_seconds: int = 12 * 3600,
+) -> str:
     parts = urlsplit(endpoint)
     aud = f"{parts.scheme}://{parts.netloc}"
     header = b64u_encode(json.dumps({"typ": "JWT", "alg": "ES256"}, separators=(",", ":")).encode())
-    claims = b64u_encode(json.dumps({"aud": aud, "exp": int(time.time()) + ttl_seconds, "sub": subject},
-                                    separators=(",", ":")).encode())
+    claims = b64u_encode(
+        json.dumps({"aud": aud, "exp": int(time.time()) + ttl_seconds, "sub": subject}, separators=(",", ":")).encode()
+    )
     signing_input = f"{header}.{claims}".encode()
     der = private_key.sign(signing_input, ec.ECDSA(hashes.SHA256()))
     r, s = decode_dss_signature(der)

@@ -41,7 +41,6 @@ from app.core.security import hash_secret, new_public_code  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[1]
 PG_DSN = TEST_DB.replace("postgresql+psycopg://", "postgresql://")
-PASSWORD = "senha-de-teste-123"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -52,8 +51,8 @@ def _migrate() -> None:
                    env={**os.environ})
 
 
-TABLES = ("audit_logs, order_status_history, order_items, service_requests, orders, customer_tokens, "
-          "idempotency_keys, outbox_events, push_subscriptions, coupons, promotions, product_options, "
+TABLES = ("audit_logs, order_items, service_requests, orders, customer_tokens, "
+          "idempotency_keys, outbox_events, push_subscriptions, notices, product_options, "
           "option_groups, products, categories, staff_sessions, table_sessions, tables, users, establishments")
 
 
@@ -91,22 +90,23 @@ def pg():
     return psycopg.connect(PG_DSN, autocommit=True)
 
 
-def make_est(name: str = "Bar Teste", join_code_required: bool = False) -> uuid.UUID:
+def make_est(name: str = "Bar Teste") -> uuid.UUID:
     eid = uuid.uuid4()
     with pg() as c:
-        c.execute("INSERT INTO establishments (id, name, timezone, join_code_required, orders_enabled) "
-                  "VALUES (%s, %s, 'America/Manaus', %s, true)", (eid, name, join_code_required))
+        c.execute("INSERT INTO establishments (id, name, timezone, orders_enabled) "
+                  "VALUES (%s, %s, 'America/Manaus', true)", (eid, name))
     return eid
 
 
-def make_user(est: uuid.UUID, role: str, email: str | None = None, pin: str | None = None) -> str:
-    email = email or f"{role.lower()}-{uuid.uuid4().hex[:6]}@teste.local"
+def make_user(est: uuid.UUID, role: str, username: str | None = None, pin: str | None = None) -> tuple[str, str]:
+    """Cria um funcionário e devolve (usuário, PIN)."""
+    username = username or f"{role.lower()}-{uuid.uuid4().hex[:6]}"
+    pin = pin or f"{uuid.uuid4().int % 10**6:06d}"
     with pg() as c:
-        c.execute("INSERT INTO users (id, establishment_id, name, email, role, password_hash, pin_hash, active) "
-                  "VALUES (%s, %s, %s, %s, %s, %s, %s, true)",
-                  (uuid.uuid4(), est, f"{role.title()} {email[:4]}", email, role, hash_secret(PASSWORD),
-                   hash_secret(pin) if pin else None))
-    return email
+        c.execute("INSERT INTO users (id, establishment_id, name, username, role, pin_hash, active) "
+                  "VALUES (%s, %s, %s, %s, %s, %s, true)",
+                  (uuid.uuid4(), est, f"{role.title()} {username[:4]}", username, role, hash_secret(pin)))
+    return username, pin
 
 
 def make_table(est: uuid.UUID, number: int) -> tuple[str, str]:
@@ -120,9 +120,10 @@ def make_table(est: uuid.UUID, number: int) -> tuple[str, str]:
 class Actor:
     """Funcionário autenticado: envia o próprio cookie de sessão e o token CSRF."""
 
-    def __init__(self, client: TestClient, email: str, password: str = PASSWORD) -> None:
+    def __init__(self, client: TestClient, username: str, pin: str) -> None:
         self.client = client
-        r = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+        self.username, self.pin = username, pin
+        r = client.post("/api/v1/auth/login", json={"username": username, "pin": pin})
         assert r.status_code == 200, r.text
         self.token = r.cookies.get("andripa_staff")
         self.csrf = r.json()["csrf_token"]
@@ -143,13 +144,15 @@ class Actor:
     def put(self, url: str, json=None, **kw):  # noqa: A002
         return self.client.put(url, json=json, headers=self.headers(kw.pop("headers", None)), **kw)
 
+    def delete(self, url: str, **kw):
+        return self.client.delete(url, headers=self.headers(kw.pop("headers", None)), **kw)
+
 
 class Customer:
-    def __init__(self, client: TestClient, code: str, join_code: str | None = None) -> None:
+    def __init__(self, client: TestClient, code: str) -> None:
         self.client = client
         self.code = code
-        body = {"join_code": join_code} if join_code else {}
-        r = client.post(f"/api/v1/public/tables/{code}/join", json=body)
+        r = client.post(f"/api/v1/public/tables/{code}/join")
         assert r.status_code == 200, r.text
         self.token = r.json()["token"]
 
@@ -167,20 +170,31 @@ class Customer:
 def world(client):
     """Estabelecimento com admin, caixa, atendente e 3 mesas."""
     est = make_est()
-    admin_email = make_user(est, "ADMIN", "admin@teste.local", pin="1111")
-    caixa_email = make_user(est, "CAIXA", "caixa@teste.local", pin="2222")
-    att_email = make_user(est, "ATENDENTE", "atendente@teste.local", pin="3333")
+    make_user(est, "ADMIN", "admin", pin="1111")
+    make_user(est, "CAIXA", "caixa", pin="2222")
+    make_user(est, "ATENDENTE", "atendente", pin="3333")
     tables = [make_table(est, n) for n in (1, 2, 3)]
     return {
         "est": est, "tables": tables,
-        "admin": Actor(client, admin_email), "caixa": Actor(client, caixa_email),
-        "atendente": Actor(client, att_email), "client": client,
+        "admin": Actor(client, "admin", "1111"), "caixa": Actor(client, "caixa", "2222"),
+        "atendente": Actor(client, "atendente", "3333"), "client": client,
     }
 
 
-def open_table(actor: Actor, table_id: str, pin: str = "3333", label: str = "Família Silva", key: str | None = None):
+def open_table(actor: Actor, table_id: str, key: str | None = None):
+    """Liberação pelo painel (funcionário logado)."""
     headers = {"idempotency-key": key} if key else None
-    return actor.post(f"/api/v1/tables/{table_id}/open", json={"label": label, "confirm_secret": pin}, headers=headers)
+    return actor.post(f"/api/v1/tables/{table_id}/open", json={}, headers=headers)
+
+
+def open_with_pin(client: TestClient, code: str, pin: str):
+    """Liberação pela página da mesa: só o PIN."""
+    return client.post(f"/api/v1/public/tables/{code}/open", json={"pin": pin})
+
+
+def close_table(actor: Actor, table_id: str, key: str | None = None):
+    headers = {"idempotency-key": key} if key else None
+    return actor.post(f"/api/v1/tables/{table_id}/close", json={}, headers=headers)
 
 
 @pytest.fixture

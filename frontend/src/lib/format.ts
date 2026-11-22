@@ -1,4 +1,4 @@
-import type { OrderStatus, RequestStatus, RequestType, TableStatus } from "../api/types";
+import type { RequestStatus, RequestType, ServiceRequest, TableStatus, TagStatus } from "../api/types";
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 export const money = (cents: number) => brl.format(cents / 100);
@@ -21,38 +21,72 @@ export function elapsed(iso: string, now: number): string {
   return `${h} h ${m % 60} min`;
 }
 
-export const requestTypeLabel: Record<RequestType, string> = {
-  CHAMAR_ATENDENTE: "Chamou o atendente",
-  NOVO_PEDIDO: "Novo pedido",
-  PEDIR_CONTA: "Pediu a conta",
-};
-
-export const requestStatusLabel: Record<RequestStatus, string> = {
-  PENDENTE: "Aguardando",
-  ASSUMIDA: "Assumido",
-  EM_ATENDIMENTO: "Em atendimento",
-  CONCLUIDA: "Concluído",
-  CANCELADA: "Cancelado",
-};
-
-export const orderStatusLabel: Record<OrderStatus, string> = {
-  RECEBIDO: "Recebido",
-  EM_PREPARO: "Em preparo",
-  PRONTO: "Pronto",
-  ENTREGUE: "Entregue",
-  CANCELADO: "Cancelado",
-};
-
 export const tableStatusLabel: Record<TableStatus, string> = {
   LIVRE: "Livre",
+  AGUARDANDO_LIBERACAO: "Mesa aguardando ser liberada",
   OCUPADA: "Ocupada",
-  ENCERRAMENTO_SOLICITADO: "Pediu a conta",
 };
 
-export const paymentLabel: Record<string, string> = {
-  DINHEIRO: "Dinheiro",
-  CARTAO_CREDITO: "Cartão de crédito",
-  CARTAO_DEBITO: "Cartão de débito",
-  PIX: "Pix",
-  OUTRO: "Outro",
+export const requestTypeLabel: Record<RequestType, string> = {
+  LIBERAR_MESA: "Liberar mesa",
+  CHAMAR_ATENDENTE: "Chamar atendente",
+  NOVO_PEDIDO: "Novo pedido",
+  PEDIR_CONTA: "Pedir a conta",
+};
+
+export function getDoneActionLabel(r: Pick<ServiceRequest, "type" | "status">): string {
+  if (r.type === "NOVO_PEDIDO") {
+    return r.status === "EM_ATENDIMENTO" ? "Marcar como entregue" : "Repassado à cozinha";
+  }
+  if (r.type === "LIBERAR_MESA") return "Liberar mesa";
+  if (r.type === "PEDIR_CONTA") return "Conta finalizada";
+  return "Atendido";
+}
+
+const statusByType: Record<RequestType, Record<RequestStatus, string>> = {
+  LIBERAR_MESA: {
+    PENDENTE: "Aguardando liberação",
+    EM_ATENDIMENTO: "Liberando",
+    CONCLUIDA: "Liberada",
+    CANCELADA: "Cancelada",
+  },
+  CHAMAR_ATENDENTE: {
+    PENDENTE: "Aguardando",
+    EM_ATENDIMENTO: "Em atendimento",
+    CONCLUIDA: "Atendido",
+    CANCELADA: "Cancelado",
+  },
+  NOVO_PEDIDO: {
+    PENDENTE: "Enviado",
+    EM_ATENDIMENTO: "Na cozinha",
+    CONCLUIDA: "Entregue",
+    CANCELADA: "Não repassado",
+  },
+  PEDIR_CONTA: {
+    PENDENTE: "Solicitada",
+    EM_ATENDIMENTO: "Fechando",
+    CONCLUIDA: "Conta finalizada",
+    CANCELADA: "Cancelada",
+  },
+};
+
+export const requestStatusLabel = (r: Pick<ServiceRequest, "type" | "status">) => statusByType[r.type][r.status];
+
+export function requestTitle(r: ServiceRequest): string {
+  if (r.type === "NOVO_PEDIDO") return r.order ? `Pedido nº ${r.order.number}` : "Pedido";
+  if (r.type === "LIBERAR_MESA") return "Liberação da mesa";
+  return r.type === "PEDIR_CONTA" ? "Conta" : "Chamado";
+}
+
+export function orderSummary(r: ServiceRequest): string {
+  return (r.order?.items ?? []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ");
+}
+
+export const tagStatusLabel: Record<TagStatus, string> = {
+  PENDENTE: "Aguardando gravação",
+  GRAVANDO: "Gravando agora",
+  GRAVADA: "Gravada e conferida",
+  TRAVADA: "Gravada e travada",
+  FALHA: "Falhou",
+  SUBSTITUIDA: "Substituída",
 };

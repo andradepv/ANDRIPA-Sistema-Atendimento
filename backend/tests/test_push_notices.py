@@ -1,5 +1,3 @@
-from datetime import UTC, datetime, timedelta
-
 import httpx
 import pytest
 from conftest import Customer, open_table, pg
@@ -103,7 +101,6 @@ def test_push_subscribe_requires_consent_and_broadcast(client, world, push_enabl
     import asyncio
 
     from app.db.session import db as appdb
-    from app.schemas import PushBroadcastIn
     from app.services import push as push_svc
 
     async def run():
@@ -111,7 +108,7 @@ def test_push_subscribe_requires_consent_and_broadcast(client, world, push_enabl
         appdb.init(get_settings().database_url, null_pool=True)
         est = world["est"]
         async with appdb.session() as s, httpx.AsyncClient(transport=httpx.MockTransport(handler)) as hc:
-            return await push_svc.broadcast(s, est, PushBroadcastIn(title="Happy hour", body="Chopp em dobro"), client=hc)
+            return await push_svc.broadcast(s, est, "Happy hour", "Chopp em dobro", client=hc)
 
     out = asyncio.run(run())
     assert (out.targeted, out.sent, out.removed) == (2, 1, 1)
@@ -123,57 +120,22 @@ def test_push_subscribe_requires_consent_and_broadcast(client, world, push_enabl
     assert active == 0
 
 
-def _iso(dt):
-    return dt.isoformat()
-
-
-def test_promotions_only_within_period(client, world):
-    now = datetime.now(UTC)
+def test_notices_shown_to_customers_only_when_active(client, world):
+    """Avisos só informam: sem botões, cupons ou cálculos. Para saber mais, o cliente chama um atendente."""
     a = world["admin"]
-    assert a.post("/api/v1/admin/promotions", json={"kind": "BANNER", "title": "Vigente",
-                                                    "starts_at": _iso(now - timedelta(hours=1)),
-                                                    "ends_at": _iso(now + timedelta(hours=1))}).status_code == 201
-    a.post("/api/v1/admin/promotions", json={"kind": "EVENTO", "title": "Futuro",
-                                             "starts_at": _iso(now + timedelta(days=1)),
-                                             "ends_at": _iso(now + timedelta(days=2))})
-    a.post("/api/v1/admin/promotions", json={"kind": "CAMPANHA", "title": "Inativa", "active": False,
-                                             "starts_at": _iso(now - timedelta(hours=1)),
-                                             "ends_at": _iso(now + timedelta(hours=1))})
-    assert a.post("/api/v1/admin/promotions", json={"kind": "BANNER", "title": "Inválida",
-                                                    "starts_at": _iso(now), "ends_at": _iso(now)}).status_code == 422
+    r = a.post("/api/v1/admin/notices", json={"title": "Happy hour", "message": "Chopp em dobro até as 20h"})
+    assert r.status_code == 201 and r.json()["push"] is None  # push não configurado: só o aviso
+    happy = r.json()["notice"]
+    old = a.post("/api/v1/admin/notices", json={"title": "Show de sexta", "active": False}).json()["notice"]
+    assert a.post("/api/v1/admin/notices", json={"title": ""}).status_code == 422
+    assert a.post("/api/v1/admin/notices", json={"title": "x", "discount": 10}).status_code == 422
     tid, code = world["tables"][0]
     open_table(world["atendente"], tid)
-    promos = Customer(client, code).get("/api/v1/public/promotions").json()
-    assert [p["title"] for p in promos] == ["Vigente"]
-
-
-def test_coupon_validate_and_redeem_limits(client, world, menu):
-    now = datetime.now(UTC)
-    a = world["admin"]
-    base = {"discount_type": "PERCENT", "value": 10, "starts_at": _iso(now - timedelta(hours=1)),
-            "ends_at": _iso(now + timedelta(hours=1))}
-    assert a.post("/api/v1/admin/coupons", json={**base, "code": "dez", "max_uses": 1}).status_code == 201
-    assert a.post("/api/v1/admin/coupons", json={**base, "code": "DEZ"}).status_code == 409
-    assert a.post("/api/v1/admin/coupons", json={**base, "code": "MUITO", "value": 150}).status_code == 422
-    a.post("/api/v1/admin/coupons", json={**base, "code": "VELHO", "starts_at": _iso(now - timedelta(days=2)),
-                                          "ends_at": _iso(now - timedelta(days=1))})
-
-    (t1, c1), (t2, c2) = world["tables"][0], world["tables"][1]
-    open_table(world["atendente"], t1)
-    open_table(world["atendente"], t2)
-    x, y = Customer(client, c1), Customer(client, c2)
-    o = x.post("/api/v1/public/orders", json={"items": [{"product_id": menu["burger"]["id"], "quantity": 2}]}).json()
-    v = x.post("/api/v1/public/coupons/validate", json={"code": "dez"}).json()
-    assert v["valid"] is True and v["estimated_discount_cents"] == 500
-    assert x.post("/api/v1/public/coupons/validate", json={"code": "VELHO"}).json()["reason"] == "Cupom expirado."
-    assert x.post("/api/v1/public/coupons/validate", json={"code": "NAOEXISTE"}).json()["valid"] is False
-
-    world["atendente"].post(f"/api/v1/orders/{o['id']}/status", json={"status": "ENTREGUE"})
-    r = world["caixa"].post(f"/api/v1/table-sessions/{o['session_id']}/close",
-                            json={"payment_method": "PIX", "coupon_code": "DEZ"})
-    assert r.status_code == 200 and r.json()["discount_cents"] == 500 and r.json()["total_cents"] == 4500
-    # Limite de uso: segundo uso falha e a mesa continua aberta.
-    sid2 = y.get("/api/v1/public/session").json()["session_id"]
-    r2 = world["caixa"].post(f"/api/v1/table-sessions/{sid2}/close", json={"payment_method": "PIX", "coupon_code": "DEZ"})
-    assert r2.status_code == 422 and r2.json()["error"]["code"] == "coupon_invalid"
-    assert y.get("/api/v1/public/session").status_code == 200
+    c = Customer(client, code)
+    assert [n["title"] for n in c.get("/api/v1/public/notices").json()] == ["Happy hour"]
+    assert a.patch(f"/api/v1/admin/notices/{old['id']}", json={"active": True}).json()["active"] is True
+    assert a.delete(f"/api/v1/admin/notices/{happy['id']}").status_code == 204
+    assert [n["title"] for n in c.get("/api/v1/public/notices").json()] == ["Show de sexta"]
+    assert len(a.get("/api/v1/admin/notices").json()) == 1
+    # Sem sessão de mesa, os avisos não são expostos.
+    assert client.get("/api/v1/public/notices").status_code == 401

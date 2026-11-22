@@ -29,20 +29,38 @@ def product_out(p: Product, *, only_active_options: bool = False) -> ProductOut:
     groups = []
     for g in p.option_groups:
         opts = [o for o in g.options if o.active or not only_active_options]
-        groups.append(OptionGroupOut(id=g.id, name=g.name, min_select=g.min_select, max_select=g.max_select,
-                                     options=[OptionOut.model_validate(o) for o in opts]))
-    return ProductOut(id=p.id, category_id=p.category_id, name=p.name, description=p.description,
-                      price_cents=p.price_cents, image_url=p.image_url, available=p.available, active=p.active,
-                      position=p.position, option_groups=groups)
+        groups.append(
+            OptionGroupOut(
+                id=g.id,
+                name=g.name,
+                min_select=g.min_select,
+                max_select=g.max_select,
+                options=[OptionOut.model_validate(o) for o in opts],
+            )
+        )
+    return ProductOut(
+        id=p.id,
+        category_id=p.category_id,
+        name=p.name,
+        description=p.description,
+        price_cents=p.price_cents,
+        image_url=p.image_url,
+        available=p.available,
+        active=p.active,
+        position=p.position,
+        option_groups=groups,
+    )
 
 
 def _menu_changed(db: AsyncSession, est_id: uuid.UUID) -> None:
     emit(db, est_id, "menu.updated", {}, audience=(STAFF, CUSTOMERS))
 
 
-async def list_categories(db: AsyncSession, est_id: uuid.UUID) -> list[CategoryOut]:
-    rows = (await db.execute(select(Category).where(Category.establishment_id == est_id)
-                             .order_by(Category.position, Category.name))).scalars().all()
+async def list_categories(db: AsyncSession, est_id: uuid.UUID, *, include_inactive: bool = False) -> list[CategoryOut]:
+    q = select(Category).where(Category.establishment_id == est_id)
+    if not include_inactive:
+        q = q.where(Category.active.is_(True))
+    rows = (await db.execute(q.order_by(Category.position, Category.name))).scalars().all()
     return [CategoryOut.model_validate(c) for c in rows]
 
 
@@ -53,15 +71,25 @@ async def create_category(db: AsyncSession, ctx: StaffCtx, data: CategoryIn) -> 
         await db.flush()
     except IntegrityError as e:
         raise conflict("category_exists", "Já existe uma categoria com esse nome.") from e
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="category.create",
-          target_type="category", target_id=c.id, details={"name": c.name})
+    audit(
+        db,
+        establishment_id=ctx.establishment_id,
+        actor_id=ctx.user.id,
+        action="category.create",
+        target_type="category",
+        target_id=c.id,
+        details={"name": c.name},
+    )
     _menu_changed(db, ctx.establishment_id)
     return CategoryOut.model_validate(c)
 
 
 async def patch_category(db: AsyncSession, ctx: StaffCtx, cat_id: uuid.UUID, data: CategoryPatch) -> CategoryOut:
-    c = (await db.execute(select(Category).where(Category.id == cat_id,
-                                                 Category.establishment_id == ctx.establishment_id))).scalar_one_or_none()
+    c = (
+        await db.execute(
+            select(Category).where(Category.id == cat_id, Category.establishment_id == ctx.establishment_id)
+        )
+    ).scalar_one_or_none()
     if c is None:
         raise not_found("Categoria")
     changes = data.model_dump(exclude_unset=True)
@@ -72,15 +100,23 @@ async def patch_category(db: AsyncSession, ctx: StaffCtx, cat_id: uuid.UUID, dat
     except IntegrityError as e:
         raise conflict("category_exists", "Já existe uma categoria com esse nome.") from e
     await db.refresh(c)
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="category.update",
-          target_type="category", target_id=c.id, details=changes)
+    audit(
+        db,
+        establishment_id=ctx.establishment_id,
+        actor_id=ctx.user.id,
+        action="category.update",
+        target_type="category",
+        target_id=c.id,
+        details=changes,
+    )
     _menu_changed(db, ctx.establishment_id)
     return CategoryOut.model_validate(c)
 
 
 async def _check_category(db: AsyncSession, est_id: uuid.UUID, cat_id: uuid.UUID) -> None:
-    c = (await db.execute(select(Category.id).where(Category.id == cat_id,
-                                                    Category.establishment_id == est_id))).scalar_one_or_none()
+    c = (
+        await db.execute(select(Category.id).where(Category.id == cat_id, Category.establishment_id == est_id))
+    ).scalar_one_or_none()
     if c is None:
         raise AppError(422, "invalid_category", "Categoria inexistente.")
 
@@ -105,8 +141,9 @@ def _apply_groups(p: Product, groups: list[OptionGroupIn]) -> None:
             if odata.id and o is None:
                 raise AppError(422, "invalid_option", "Adicional inexistente.")
             if o is None:
-                g.options.append(ProductOption(name=odata.name, price_cents=odata.price_cents,
-                                               active=odata.active, position=oi))
+                g.options.append(
+                    ProductOption(name=odata.name, price_cents=odata.price_cents, active=odata.active, position=oi)
+                )
             else:
                 o.name, o.price_cents, o.active, o.position = odata.name, odata.price_cents, odata.active, oi
                 seen.add(o.id)
@@ -125,8 +162,13 @@ def _apply_groups(p: Product, groups: list[OptionGroupIn]) -> None:
 
 
 async def get_product(db: AsyncSession, est_id: uuid.UUID, product_id: uuid.UUID) -> Product:
-    p = (await db.execute(select(Product).where(Product.id == product_id, Product.establishment_id == est_id)
-                          .execution_options(populate_existing=True))).scalar_one_or_none()
+    p = (
+        await db.execute(
+            select(Product)
+            .where(Product.id == product_id, Product.establishment_id == est_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
     if p is None:
         raise not_found("Produto")
     return p
@@ -134,14 +176,20 @@ async def get_product(db: AsyncSession, est_id: uuid.UUID, product_id: uuid.UUID
 
 async def create_product(db: AsyncSession, ctx: StaffCtx, data: ProductIn) -> ProductOut:
     await _check_category(db, ctx.establishment_id, data.category_id)
-    p = Product(establishment_id=ctx.establishment_id,
-                **data.model_dump(exclude={"option_groups"}))
+    p = Product(establishment_id=ctx.establishment_id, **data.model_dump(exclude={"option_groups"}))
     p.option_groups = []
     _apply_groups(p, data.option_groups)
     db.add(p)
     await db.flush()
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="product.create",
-          target_type="product", target_id=p.id, details={"name": p.name, "price_cents": p.price_cents})
+    audit(
+        db,
+        establishment_id=ctx.establishment_id,
+        actor_id=ctx.user.id,
+        action="product.create",
+        target_type="product",
+        target_id=p.id,
+        details={"name": p.name, "price_cents": p.price_cents},
+    )
     _menu_changed(db, ctx.establishment_id)
     return product_out(await get_product(db, ctx.establishment_id, p.id))
 
@@ -156,23 +204,50 @@ async def patch_product(db: AsyncSession, ctx: StaffCtx, product_id: uuid.UUID, 
     if data.option_groups is not None:
         _apply_groups(p, data.option_groups)
     await db.flush()
-    audit(db, establishment_id=ctx.establishment_id, actor_id=ctx.user.id, action="product.update",
-          target_type="product", target_id=p.id, details={k: str(v) for k, v in changes.items()})
+    audit(
+        db,
+        establishment_id=ctx.establishment_id,
+        actor_id=ctx.user.id,
+        action="product.update",
+        target_type="product",
+        target_id=p.id,
+        details={k: str(v) for k, v in changes.items()},
+    )
     _menu_changed(db, ctx.establishment_id)
     return product_out(await get_product(db, ctx.establishment_id, p.id))
 
 
-async def list_products(db: AsyncSession, est_id: uuid.UUID) -> list[ProductOut]:
-    rows = (await db.execute(select(Product).where(Product.establishment_id == est_id)
-                             .order_by(Product.position, Product.name))).scalars().all()
+async def list_products(db: AsyncSession, est_id: uuid.UUID, *, include_inactive: bool = False) -> list[ProductOut]:
+    q = select(Product).where(Product.establishment_id == est_id)
+    if not include_inactive:
+        q = q.where(Product.active.is_(True))
+    rows = (await db.execute(q.order_by(Product.position, Product.name))).scalars().all()
     return [product_out(p) for p in rows]
 
 
 async def public_menu(db: AsyncSession, est_id: uuid.UUID) -> list[MenuCategoryOut]:
-    cats = (await db.execute(select(Category).where(Category.establishment_id == est_id, Category.active.is_(True))
-                             .order_by(Category.position, Category.name))).scalars().all()
-    prods = (await db.execute(select(Product).where(Product.establishment_id == est_id, Product.active.is_(True))
-                              .order_by(Product.position, Product.name))).scalars().all()
+    cats = (
+        (
+            await db.execute(
+                select(Category)
+                .where(Category.establishment_id == est_id, Category.active.is_(True))
+                .order_by(Category.position, Category.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    prods = (
+        (
+            await db.execute(
+                select(Product)
+                .where(Product.establishment_id == est_id, Product.active.is_(True))
+                .order_by(Product.position, Product.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
     by_cat: dict[uuid.UUID, list[ProductOut]] = {}
     for p in prods:
         po = product_out(p, only_active_options=True)

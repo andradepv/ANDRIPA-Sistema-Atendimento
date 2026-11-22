@@ -53,6 +53,6 @@ def test_redis_unavailable_degrades_gracefully(client, world, degraded_instances
 
     asyncio.run(run())
     # Rate limiting continua funcionando (limitador local).
-    codes = [httpx.post(a + "/api/v1/auth/login", json={"email": "x@y.com", "password": "z"}).status_code
+    codes = [httpx.post(a + "/api/v1/auth/login", json={"username": "ninguem", "pin": "0000"}).status_code
              for _ in range(12)]
     assert 429 in codes

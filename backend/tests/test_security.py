@@ -2,8 +2,8 @@ from conftest import Customer, open_table, pg
 
 
 def test_body_size_limit(client, world):
-    big = {"name": "x" * 70_000}
-    r = world["admin"].post("/api/v1/menu/categories", json=big)
+    big = {"number": 50, "name": "x" * 70_000}
+    r = world["admin"].post("/api/v1/tables", json=big)
     assert r.status_code == 413
 
 
@@ -16,10 +16,10 @@ def test_invalid_uuid_and_json(client, world):
 def test_sql_injection_strings_are_data(client, world):
     payload = "'; DROP TABLE tables; --"
     a = world["admin"]
-    r = a.post("/api/v1/menu/categories", json={"name": payload})
+    r = a.post("/api/v1/tables", json={"number": 50, "name": payload})
     assert r.status_code == 201 and r.json()["name"] == payload
     with pg() as c:
-        assert c.execute("SELECT count(*) FROM tables").fetchone()[0] == 3
+        assert c.execute("SELECT count(*) FROM tables").fetchone()[0] == 4
 
 
 def test_security_headers(client, world):
@@ -55,10 +55,10 @@ def test_tokens_not_stored_in_plaintext(client, world):
     with pg() as c:
         hashes = [r[0] for r in c.execute("SELECT token_hash FROM customer_tokens").fetchall()]
         staff = [r[0] for r in c.execute("SELECT token_hash FROM staff_sessions").fetchall()]
-        pw = c.execute("SELECT password_hash FROM users LIMIT 1").fetchone()[0]
+        pins = [r[0] for r in c.execute("SELECT pin_hash FROM users").fetchall()]
     assert cust.token not in hashes and len(hashes[0]) == 64
     assert world["admin"].token not in staff
-    assert pw.startswith("$argon2id$")
+    assert pins and all(p.startswith("$argon2id$") for p in pins)
 
 
 def test_audit_trail(client, world):
@@ -67,7 +67,7 @@ def test_audit_trail(client, world):
     logs = world["admin"].get("/api/v1/admin/audit-logs").json()
     actions = {item["action"] for item in logs["items"]}
     assert {"auth.login", "table.open"} <= actions
-    assert all("password" not in str(i["details"]).lower() or "changed" in str(i["details"]) for i in logs["items"])
+    assert all("pin" not in str(i["details"]).lower() or "changed" in str(i["details"]) for i in logs["items"])
 
 
 def test_health(client):

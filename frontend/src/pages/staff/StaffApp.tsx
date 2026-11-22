@@ -3,11 +3,10 @@ import { api, ApiError, errorMessage, setUnauthorizedHandler } from "../../api/h
 import type { Me } from "../../api/types";
 import { ConnectionBadge, Field, useToast } from "../../components/ui";
 import { Link, navigate } from "../../lib/router";
-import { AdminAudit, AdminMenu, AdminPromotions, AdminPush, AdminSettings, AdminTables, AdminUsers } from "../admin/Admin";
-import { CashPanel, History } from "./Cash";
-import { OpsBoard } from "./OpsBoard";
-import { OrdersBoard } from "./OrdersBoard";
+import { AdminAudit, AdminMenu, AdminNotices, AdminSettings, AdminTables, AdminUsers } from "../admin/Admin";
+import { OpsBoard, TableDetail } from "./OpsBoard";
 import { StaffDataProvider, useStaff } from "./StaffData";
+import { AdminFloor } from "../admin/FloorEditor";
 
 export function StaffApp({ path }: { path: string }) {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
@@ -38,8 +37,8 @@ export function StaffApp({ path }: { path: string }) {
 }
 
 function Login({ onLogin, already }: { onLogin: (m: Me) => void; already: Me | null }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
+  const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -57,7 +56,7 @@ function Login({ onLogin, already }: { onLogin: (m: Me) => void; already: Me | n
             setBusy(true);
             setError(null);
             try {
-              onLogin(await api<Me>("/auth/login", { body: { email, password } }));
+              onLogin(await api<Me>("/auth/login", { body: { username, pin } }));
             } catch (err) {
               setError(errorMessage(err));
             } finally {
@@ -65,11 +64,18 @@ function Login({ onLogin, already }: { onLogin: (m: Me) => void; already: Me | n
             }
           }}
         >
-          <Field label="E-mail">
-            <input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <Field label="Usuário">
+            <input autoComplete="username" autoCapitalize="none" value={username} onChange={(e) => setUsername(e.target.value)} required />
           </Field>
-          <Field label="Senha">
-            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <Field label="PIN">
+            <input
+              type="password"
+              inputMode="numeric"
+              autoComplete="current-password"
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+              required
+            />
           </Field>
           {error && (
             <p className="form-error" role="alert">
@@ -87,14 +93,11 @@ function Login({ onLogin, already }: { onLogin: (m: Me) => void; already: Me | n
 
 const NAV: { to: string; label: string; perm: string }[] = [
   { to: "/painel", label: "Salão", perm: "tables.view" },
-  { to: "/pedidos", label: "Pedidos", perm: "orders.view" },
-  { to: "/caixa", label: "Caixa", perm: "cash.view" },
-  { to: "/historico", label: "Histórico", perm: "history.view" },
   { to: "/admin/cardapio", label: "Cardápio", perm: "menu.manage" },
   { to: "/admin/mesas", label: "Mesas", perm: "tables.manage" },
+  { to: "/admin/planta", label: "Planta", perm: "layouts.manage" },
   { to: "/admin/usuarios", label: "Equipe", perm: "users.manage" },
-  { to: "/admin/promocoes", label: "Promoções", perm: "promotions.manage" },
-  { to: "/admin/notificacoes", label: "Notificações", perm: "push.send" },
+  { to: "/admin/notificacoes", label: "Notificações", perm: "notices.manage" },
   { to: "/admin/auditoria", label: "Auditoria", perm: "audit.view" },
   { to: "/admin/configuracoes", label: "Configurações", perm: "settings.manage" },
 ];
@@ -102,7 +105,7 @@ const NAV: { to: string; label: string; perm: string }[] = [
 function Layout({ path, onLogout }: { path: string; onLogout: () => void }) {
   const { me, conn, can, requests } = useStaff();
   const toast = useToast();
-  const pending = requests.filter((r) => r.status === "PENDENTE").length;
+  const pending = requests.length;
   const items = NAV.filter((n) => can(n.perm));
   const current = items.find((n) => path.startsWith(n.to));
   useEffect(() => {
@@ -135,24 +138,24 @@ function Layout({ path, onLogout }: { path: string; onLogout: () => void }) {
           </button>
         </div>
       </header>
-      <nav className="s-nav" aria-label="Painéis">
+      {items.length > 1 && (
+        <nav className="s-nav" aria-label="Painéis">
         {items.map((n) => (
           <Link key={n.to} to={n.to} className="s-nav__item" aria-current={current?.to === n.to ? "page" : undefined}>
             {n.label}
             {n.to === "/painel" && pending > 0 && <span className="badge" aria-label={`${pending} pendentes`}>{pending}</span>}
           </Link>
         ))}
-      </nav>
+        </nav>
+      )}
       <main className="s-main">
-        {path.startsWith("/painel") && <OpsBoard />}
-        {path.startsWith("/pedidos") && <OrdersBoard />}
-        {path.startsWith("/caixa") && <CashPanel />}
-        {path.startsWith("/historico") && <History />}
+        {path === "/painel" && <OpsBoard />}
+        {path.startsWith("/painel/mesa/") && <TableDetail tableId={path.slice("/painel/mesa/".length)} />}
         {path.startsWith("/admin/cardapio") && <AdminMenu />}
         {path.startsWith("/admin/mesas") && <AdminTables />}
+        {path.startsWith("/admin/planta") && <AdminFloor />}
         {path.startsWith("/admin/usuarios") && <AdminUsers />}
-        {path.startsWith("/admin/promocoes") && <AdminPromotions />}
-        {path.startsWith("/admin/notificacoes") && <AdminPush />}
+        {path.startsWith("/admin/notificacoes") && <AdminNotices />}
         {path.startsWith("/admin/auditoria") && <AdminAudit />}
         {path.startsWith("/admin/configuracoes") && <AdminSettings />}
         {path === "/conta" && <MyAccount />}
@@ -167,41 +170,35 @@ function MyAccount() {
   const toast = useToast();
   const { me } = useStaff();
   const [current, setCurrent] = useState("");
-  const [pw, setPw] = useState("");
   const [pin, setPin] = useState("");
+  const digits = (v: string) => v.replace(/\D/g, "");
   return (
     <section className="s-section s-narrow">
       <h1 className="s-h1">Minha conta</h1>
       <p className="muted">
-        {me.user.email} · PIN {me.user.has_pin ? "configurado" : "não configurado (a abertura de mesa pedirá sua senha)"}
+        Usuário <strong>{me.user.username}</strong>. Seu PIN serve para entrar no painel e para liberar mesas na página da mesa.
       </p>
       <form
         className="stack"
         onSubmit={async (e) => {
           e.preventDefault();
           try {
-            await api("/auth/credentials", {
-              body: { current_password: current, new_password: pw || null, new_pin: pin || null },
-            });
-            toast("Credenciais atualizadas.", "ok");
+            await api("/auth/pin", { body: { current_pin: current, new_pin: pin } });
+            toast("PIN atualizado.", "ok");
             setCurrent("");
-            setPw("");
             setPin("");
           } catch (err) {
             toast(errorMessage(err), "error");
           }
         }}
       >
-        <Field label="Senha atual">
-          <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} required autoComplete="current-password" />
+        <Field label="PIN atual">
+          <input type="password" inputMode="numeric" value={current} onChange={(e) => setCurrent(digits(e.target.value))} required autoComplete="current-password" />
         </Field>
-        <Field label="Nova senha" hint="Mínimo de 10 caracteres. Deixe em branco para manter.">
-          <input type="password" value={pw} minLength={10} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" />
+        <Field label="Novo PIN" hint="4 a 8 números. Não pode ser igual ao de outra pessoa da equipe.">
+          <input type="password" inputMode="numeric" value={pin} pattern="\d{4,8}" onChange={(e) => setPin(digits(e.target.value))} required autoComplete="new-password" />
         </Field>
-        <Field label="Novo PIN pessoal" hint="4 a 8 números, usado para confirmar a abertura de mesas.">
-          <input inputMode="numeric" value={pin} pattern="\d{4,8}" onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} />
-        </Field>
-        <button className="btn btn--primary" disabled={!current || (!pw && !pin)}>
+        <button className="btn btn--primary" disabled={!current || pin.length < 4}>
           Salvar
         </button>
       </form>
